@@ -1,19 +1,262 @@
-
 import os
 import re
 import json
 from urllib.parse import urlparse
+
 import requests
 from bs4 import BeautifulSoup
 import streamlit as st
 from openai import OpenAI
 
-st.set_page_config(page_title="Golf Flip Scanner", page_icon="⛳", layout="wide")
+# -----------------------------
+# App configuration
+# -----------------------------
+st.set_page_config(
+    page_title="FlipGolf",
+    page_icon="⛳",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-DEFAULT_TARGET_PROFIT = 75.0
-DEFAULT_MIN_ROI = 25.0
-NEGOTIATE_BUFFER = 0.10
+# -----------------------------
+# Brand / styling
+# -----------------------------
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
 
+:root {
+  --ink: #17231f;
+  --muted: #66736e;
+  --cream: #f4f1e8;
+  --paper: #fbfaf6;
+  --line: #dfe3dc;
+  --green: #1e4b3b;
+  --green-2: #2d6a4f;
+  --lime: #b8d66a;
+  --orange: #d98145;
+  --red: #b94b48;
+}
+
+html, body, [class*="css"] {
+  font-family: "DM Sans", sans-serif;
+}
+
+.stApp {
+  background: var(--cream);
+  color: var(--ink);
+}
+
+.block-container {
+  max-width: 1180px;
+  padding-top: 2.0rem;
+  padding-bottom: 4rem;
+}
+
+h1, h2, h3 {
+  font-family: "Manrope", sans-serif !important;
+  color: var(--ink) !important;
+  letter-spacing: -0.035em;
+}
+
+.brand {
+  display:flex;
+  align-items:center;
+  gap:12px;
+  margin-bottom:4px;
+}
+.brand-mark {
+  width:42px;
+  height:42px;
+  border-radius:12px;
+  background:var(--green);
+  color:white;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:22px;
+  box-shadow: 0 8px 24px rgba(30,75,59,.16);
+}
+.brand-name {
+  font-family:"Manrope",sans-serif;
+  font-size:28px;
+  font-weight:800;
+  letter-spacing:-.05em;
+}
+.brand-tag {
+  color:var(--muted);
+  font-size:13px;
+  margin-left:54px;
+  margin-top:-4px;
+}
+
+.hero {
+  background:var(--paper);
+  border:1px solid var(--line);
+  border-radius:20px;
+  padding:28px 30px 26px;
+  box-shadow:0 10px 35px rgba(23,35,31,.05);
+  margin:18px 0 22px;
+}
+
+.hero-kicker {
+  text-transform:uppercase;
+  letter-spacing:.12em;
+  font-size:11px;
+  font-weight:700;
+  color:var(--green-2);
+  margin-bottom:8px;
+}
+.hero-title {
+  font-family:"Manrope",sans-serif;
+  font-size:34px;
+  line-height:1.08;
+  font-weight:800;
+  letter-spacing:-.05em;
+  margin-bottom:8px;
+}
+.hero-copy {
+  color:var(--muted);
+  font-size:14px;
+  max-width:760px;
+}
+
+div[data-testid="stTextInput"] input {
+  border-radius:10px !important;
+  border:1px solid #cfd6cf !important;
+  background:white !important;
+  color:var(--ink) !important;
+}
+div[data-testid="stButton"] button {
+  border-radius:10px !important;
+  font-weight:700 !important;
+  min-height:44px;
+}
+button[kind="primary"] {
+  background:var(--green) !important;
+  border-color:var(--green) !important;
+}
+
+.section-label {
+  text-transform:uppercase;
+  letter-spacing:.12em;
+  font-size:11px;
+  font-weight:700;
+  color:var(--green-2);
+  margin:26px 0 8px;
+}
+
+.metric-card {
+  background:var(--paper);
+  border:1px solid var(--line);
+  border-radius:15px;
+  padding:16px 18px;
+  min-height:94px;
+}
+.metric-label {
+  color:var(--muted);
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.08em;
+  font-weight:700;
+}
+.metric-value {
+  font-family:"Manrope",sans-serif;
+  font-size:25px;
+  font-weight:800;
+  margin-top:6px;
+}
+.metric-note {
+  color:var(--muted);
+  font-size:11px;
+  margin-top:2px;
+}
+
+.decision {
+  border-radius:16px;
+  padding:19px 22px;
+  margin:16px 0;
+  border:1px solid var(--line);
+  background:var(--paper);
+}
+.decision-title {
+  font-family:"Manrope",sans-serif;
+  font-size:23px;
+  font-weight:800;
+  letter-spacing:-.035em;
+}
+.decision-sub {
+  color:var(--muted);
+  font-size:13px;
+  margin-top:4px;
+}
+.decision.buy { border-left:5px solid var(--green-2); }
+.decision.negotiate { border-left:5px solid var(--orange); }
+.decision.pass { border-left:5px solid var(--red); }
+.decision.ceiling { border-left:5px solid var(--green); }
+
+.comp {
+  background:var(--paper);
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:14px 16px;
+  margin:8px 0;
+}
+.comp-head {
+  display:flex;
+  justify-content:space-between;
+  gap:16px;
+}
+.comp-title {
+  font-weight:700;
+  color:var(--ink);
+}
+.comp-price {
+  font-family:"Manrope",sans-serif;
+  font-weight:800;
+  white-space:nowrap;
+}
+.comp-meta {
+  color:var(--muted);
+  font-size:11px;
+  margin-top:4px;
+}
+.comp-rationale {
+  color:#4f5c57;
+  font-size:12px;
+  margin-top:7px;
+}
+
+.pill {
+  display:inline-block;
+  padding:4px 8px;
+  border-radius:999px;
+  background:#e8eee9;
+  color:var(--green);
+  font-size:10px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+}
+
+.small-note {
+  color:var(--muted);
+  font-size:11px;
+  line-height:1.5;
+}
+
+.sidebar-title {
+  font-family:"Manrope",sans-serif;
+  font-weight:800;
+  font-size:18px;
+  letter-spacing:-.03em;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------------
+# Helpers
+# -----------------------------
 def secret(name):
     try:
         return st.secrets.get(name, os.getenv(name, ""))
@@ -40,9 +283,24 @@ def eur(v):
         return "—"
     return "€{:,.0f}".format(float(v)).replace(",", ".")
 
-def clean_url(url):
-    return url.split("?")[0].strip()
+def pct(v):
+    return f"{float(v):.0f}%"
 
+def clamp(v, lo, hi):
+    return max(lo, min(hi, float(v)))
+
+def metric_card(label, value, note=""):
+    return f"""
+    <div class="metric-card">
+      <div class="metric-label">{label}</div>
+      <div class="metric-value">{value}</div>
+      <div class="metric-note">{note}</div>
+    </div>
+    """
+
+# -----------------------------
+# Listing retrieval
+# -----------------------------
 def fetch_listing(url):
     p = urlparse(url)
     if p.scheme not in ("http", "https"):
@@ -52,11 +310,14 @@ def fetch_listing(url):
     if "/v/" not in p.path.lower():
         raise ValueError("Please paste the URL of one individual listing, not a category/search page.")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; GolfFlipScanner/0.5)",
-        "Accept-Language": "nl-BE,nl;q=0.9,fr-BE,fr;q=0.8,en;q=0.7",
-    }
-    r = requests.get(clean_url(url), headers=headers, timeout=20)
+    r = requests.get(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; FlipGolf/0.6)",
+            "Accept-Language": "nl-BE,nl;q=0.9,en;q=0.8",
+        },
+        timeout=20,
+    )
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -74,22 +335,21 @@ def fetch_listing(url):
     if t:
         desc = t.get("content", "").strip()
 
-    for tag in soup.find_all("script", type="application/ld+json"):
+    for t in soup.find_all("script", type="application/ld+json"):
         try:
-            d = json.loads(tag.string or tag.get_text())
+            d = json.loads(t.string or t.get_text())
         except Exception:
             continue
         for o in (d if isinstance(d, list) else [d]):
-            if not isinstance(o, dict):
-                continue
-            title = title or str(o.get("name", ""))
-            desc = desc or str(o.get("description", ""))
-            offers = o.get("offers", [])
-            for x in (offers if isinstance(offers, list) else [offers]):
-                if isinstance(x, dict):
-                    q = parse_euro(x.get("price"))
-                    if q and q > 0:
-                        cands.append(q)
+            if isinstance(o, dict):
+                title = title or str(o.get("name", ""))
+                desc = desc or str(o.get("description", ""))
+                offers = o.get("offers", [])
+                for x in (offers if isinstance(offers, list) else [offers]):
+                    if isinstance(x, dict):
+                        q = parse_euro(x.get("price"))
+                        if q and q > 0:
+                            cands.append(q)
 
     text = soup.get_text("\n", strip=True)
     for m in re.findall(r"(?:€\s*|EUR\s*)(\d[\d.\s]*(?:,\d{1,2})?)", text, re.I):
@@ -102,7 +362,7 @@ def fetch_listing(url):
     listing_type = "auction" if "bieden" in lower else "fixed_price"
 
     return {
-        "url": clean_url(url),
+        "url": url,
         "title": title,
         "description": desc,
         "price_candidates": cands[:30],
@@ -110,28 +370,32 @@ def fetch_listing(url):
         "listing_type": listing_type,
     }
 
-EQUIPMENT_PROPERTIES = {
-    "brand": {"type": "string"},
-    "model": {"type": "string"},
-    "category": {"type": "string"},
-    "generation": {"type": "string"},
-    "set_composition": {"type": "string"},
-    "shaft": {"type": "string"},
-    "flex": {"type": "string"},
-    "loft": {"type": "string"},
-    "handedness": {"type": "string"},
-    "condition": {"type": "string"},
-    "notes": {"type": "string"},
-}
-
+# -----------------------------
+# OpenAI analysis
+# -----------------------------
 EQUIPMENT_SCHEMA = {
     "type": "object",
-    "properties": EQUIPMENT_PROPERTIES,
-    "required": list(EQUIPMENT_PROPERTIES.keys()),
+    "properties": {
+        "brand": {"type": "string"},
+        "model": {"type": "string"},
+        "category": {"type": "string"},
+        "generation": {"type": "string"},
+        "set_composition": {"type": "string"},
+        "shaft": {"type": "string"},
+        "flex": {"type": "string"},
+        "loft": {"type": "string"},
+        "handedness": {"type": "string"},
+        "condition": {"type": "string"},
+        "notes": {"type": "string"},
+    },
+    "required": [
+        "brand","model","category","generation","set_composition",
+        "shaft","flex","loft","handedness","condition","notes"
+    ],
     "additionalProperties": False,
 }
 
-def initial_identification(x):
+def identify_equipment(x):
     key = secret("OPENAI_API_KEY")
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not configured in Streamlit Secrets.")
@@ -143,40 +407,40 @@ def initial_identification(x):
             "identification_confidence": {"type": "number"},
             "asking_price_eur": {"type": "number"},
             "current_bid_eur": {"type": "number"},
+            "condition_summary": {"type": "string"},
+            "spec_summary": {"type": "string"},
             "risks": {"type": "array", "items": {"type": "string"}},
             "missing_information": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
-            "equipment", "identification_confidence", "asking_price_eur",
-            "current_bid_eur", "risks", "missing_information"
+            "equipment","identification_confidence","asking_price_eur",
+            "current_bid_eur","condition_summary","spec_summary",
+            "risks","missing_information"
         ],
         "additionalProperties": False,
     }
 
     prompt = f"""
-You are the equipment-identification stage of a used-golf resale scanner.
+You are identifying used golf equipment from a Belgian 2dehands/2ememain listing.
 
-Classify the listing and identify the exact golf equipment from the supplied listing.
-Never invent missing specifications: use "Unknown".
-The listing type detected by the scraper is: {x["listing_type"]}.
-For bidding listings, asking_price_eur must be 0 unless a fixed price is explicitly shown.
-current_bid_eur must be 0 unless a current bid is explicitly visible.
-Do not mistake unrelated euro values on the page for the listing price.
-Identification confidence is 0-100.
+Rules:
+- Never invent specifications.
+- Use "Unknown" when the listing does not provide a detail.
+- Listing type: {x["listing_type"]}.
+- For bidding listings, current_bid_eur must be 0 unless a current bid is explicitly visible.
+- Do not mistake unrelated euro amounts for the listing price.
+- Extract the exact model/generation/set composition/shaft/flex where supported.
 
 URL:
 {x["url"]}
 
-Title:
+TITLE:
 {x["title"]}
 
-Description:
+DESCRIPTION:
 {x["description"]}
 
-Price candidates:
-{x["price_candidates"]}
-
-Page text:
+PAGE TEXT:
 {x["page_text"]}
 """
 
@@ -184,318 +448,313 @@ Page text:
     r = client.responses.create(
         model="gpt-5.6-luna",
         input=prompt,
-        text={"format": {
-            "type": "json_schema",
-            "name": "golf_equipment_identification",
-            "schema": schema,
-            "strict": True,
-        }},
+        text={"format": {"type": "json_schema", "name": "equipment_identification", "schema": schema, "strict": True}},
     )
     return json.loads(r.output_text)
 
-def market_research(equipment, listing):
+def research_market(equipment):
     key = secret("OPENAI_API_KEY")
     if not key:
         raise RuntimeError("OPENAI_API_KEY is not configured in Streamlit Secrets.")
 
+    eq = equipment["equipment"]
     schema = {
         "type": "object",
         "properties": {
-            "search_summary": {"type": "string"},
-            "comparables": {
+            "market_summary": {"type": "string"},
+            "market_confidence": {"type": "number"},
+            "estimated_sale_low_eur": {"type": "number"},
+            "estimated_sale_high_eur": {"type": "number"},
+            "conservative_sale_eur": {"type": "number"},
+            "liquidity": {"type": "string"},
+            "liquidity_reason": {"type": "string"},
+            "comps": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "properties": {
                         "title": {"type": "string"},
-                        "url": {"type": "string"},
                         "price_eur": {"type": "number"},
-                        "condition": {"type": "string"},
-                        "similarity": {"type": "number"},
-                        "why_comparable": {"type": "string"},
+                        "market": {"type": "string"},
                         "source_type": {"type": "string"},
+                        "url": {"type": "string"},
+                        "match_pct": {"type": "number"},
+                        "price_type": {"type": "string"},
+                        "rationale": {"type": "string"},
                     },
                     "required": [
-                        "title", "url", "price_eur", "condition",
-                        "similarity", "why_comparable", "source_type"
+                        "title","price_eur","market","source_type","url",
+                        "match_pct","price_type","rationale"
                     ],
                     "additionalProperties": False,
                 },
             },
-            "estimated_resale_low_eur": {"type": "number"},
-            "estimated_resale_high_eur": {"type": "number"},
-            "conservative_resale_eur": {"type": "number"},
-            "estimated_costs_eur": {"type": "number"},
-            "risk_buffer_eur": {"type": "number"},
-            "liquidity": {"type": "string"},
-            "valuation_confidence": {"type": "number"},
+            "excluded_evidence": {"type": "array", "items": {"type": "string"}},
             "valuation_note": {"type": "string"},
         },
         "required": [
-            "search_summary", "comparables", "estimated_resale_low_eur",
-            "estimated_resale_high_eur", "conservative_resale_eur",
-            "estimated_costs_eur", "risk_buffer_eur", "liquidity",
-            "valuation_confidence", "valuation_note"
+            "market_summary","market_confidence","estimated_sale_low_eur",
+            "estimated_sale_high_eur","conservative_sale_eur","liquidity",
+            "liquidity_reason","comps","excluded_evidence","valuation_note"
         ],
         "additionalProperties": False,
     }
 
-    e = equipment
-    exact = " ".join(v for v in [
-        e.get("brand"), e.get("model"), e.get("generation"),
-        e.get("set_composition"), e.get("shaft"), e.get("flex"), e.get("loft")
-    ] if v and v != "Unknown")
+    search_prompt = f"""
+You are the market-research engine for a Belgian golf equipment flipping app.
 
-    prompt = f"""
-You are the market-research and valuation stage of a used-golf flipping scanner.
+Find CURRENT market evidence for this exact used golf equipment:
 
-Use web search to find CURRENT comparable listings. Prioritize individual listings on
-2dehands.be and 2ememain.be. You may use Marktplaats.nl or established European golf
-resellers only as secondary evidence when there are too few good Belgian comparables.
+Brand: {eq["brand"]}
+Model: {eq["model"]}
+Category: {eq["category"]}
+Generation: {eq["generation"]}
+Set: {eq["set_composition"]}
+Shaft: {eq["shaft"]}
+Flex: {eq["flex"]}
+Loft: {eq["loft"]}
+Handedness: {eq["handedness"]}
+Condition: {eq["condition"]}
 
-Search for the EXACT equipment first. Match model/generation, club count, shaft/flex,
-handedness and condition as closely as possible. Do not include a listing just because
-it contains a similar brand. Exclude obvious unrelated products, accessories, bundles
-with materially different contents, and dealer listings when private comparables exist.
+Research rules:
+1. Prioritise Belgium private listings: 2dehands.be and 2ememain.be.
+2. Then Netherlands private listings, especially Marktplaats.
+3. Then established European used-golf retailers.
+4. eBay and other international sources are supporting evidence only.
+5. Prefer the exact model/generation and similar set composition/specification.
+6. Do NOT use new retail prices as direct resale comps.
+7. Clearly distinguish asking price, current bid, and sold/completed price when the source makes that distinction.
+8. Never invent a URL or price. If a source cannot be verified, exclude it.
+9. Try to find at least 5 useful pieces of evidence if available, but return fewer rather than padding with weak comps.
+10. Estimate an achievable private-sale price, not simply the highest asking price.
+11. Account qualitatively for liquidity: how many relevant listings exist, how niche the configuration is, and whether the observed prices are asking prices rather than completed sales.
+12. Match percentage is your estimate of specification/condition similarity, not a confidence score.
+13. In the final valuation, weight Belgian private evidence most heavily. Netherlands is secondary. Retail/eBay is tertiary.
+14. If evidence is weak, say so explicitly and widen the uncertainty range rather than inventing precision.
 
-For each comparable, provide its actual listing URL and displayed asking/bid price.
-Never invent a price or URL. If price is not visible, do not include the comparable.
-Similarity is 0-100.
-
-IMPORTANT:
-- These are ASKING prices, not confirmed transaction prices.
-- A conservative resale estimate should normally be below or around the lower/middle
-  portion of relevant private asking prices, unless the evidence clearly supports otherwise.
-- Do not use retail-new prices as direct used resale prices.
-- If evidence is weak, widen the range and lower valuation_confidence.
-- Estimated costs should include realistic selling/shipping/payment costs for a small
-  Belgian private resale. Do not double-count the purchase price.
-- Risk buffer should reflect condition/spec uncertainty and market/liquidity risk.
-- liquidity should be one of: High, Medium, Low.
-- valuation_confidence is 0-100.
-- If there are fewer than 3 genuinely relevant comparables, say so explicitly.
-
-TARGET LISTING:
-URL: {listing["url"]}
-Title: {listing["title"]}
-Description: {listing["description"]}
-Listing type: {listing["listing_type"]}
-
-IDENTIFIED EQUIPMENT:
-{json.dumps(e, ensure_ascii=False)}
-
-EXACT SEARCH TERMS:
-{exact}
+Return the evidence and valuation in the requested JSON format. Include the source URL for every comparable.
 """
 
     client = OpenAI(api_key=key)
     r = client.responses.create(
         model="gpt-5.6-luna",
         tools=[{"type": "web_search"}],
-        tool_choice={"type": "web_search"},
-        input=prompt,
-        text={"format": {
-            "type": "json_schema",
-            "name": "golf_market_research",
-            "schema": schema,
-            "strict": True,
-        }},
+        input=search_prompt,
+        text={"format": {"type": "json_schema", "name": "market_research", "schema": schema, "strict": True}},
     )
     return json.loads(r.output_text)
 
-def calculate(resale, costs, risk, purchase, target_profit):
-    max_buy = max(0.0, resale - costs - risk - target_profit)
-    profit = resale - costs - risk - purchase
-    roi = (profit / purchase * 100.0) if purchase > 0 else None
-    return max_buy, profit, roi
+# -----------------------------
+# UI
+# -----------------------------
+st.markdown("""
+<div class="brand">
+  <div class="brand-mark">⛳</div>
+  <div class="brand-name">FlipGolf</div>
+</div>
+<div class="brand-tag">Used golf. Bought with a margin.</div>
+""", unsafe_allow_html=True)
 
-def decision_for(price, max_buy):
-    if price <= max_buy:
-        return "BUY"
-    if price <= max_buy * (1 + NEGOTIATE_BUFFER):
-        return "NEGOTIATE"
-    return "PASS"
-
-# Sidebar settings
 with st.sidebar:
-    st.header("Scanner settings")
-    target_profit = st.number_input(
-        "Target profit (€)", min_value=0.0, value=DEFAULT_TARGET_PROFIT, step=25.0
-    )
-    min_roi = st.number_input(
-        "Minimum ROI (%)", min_value=0.0, value=DEFAULT_MIN_ROI, step=5.0
-    )
-    st.caption("These settings change the decision threshold; the market valuation is researched separately.")
+    st.markdown('<div class="sidebar-title">Scanner settings</div>', unsafe_allow_html=True)
+    target_profit = st.number_input("Target profit (€)", min_value=0.0, max_value=1000.0, value=75.0, step=5.0)
+    min_roi = st.number_input("Minimum ROI (%)", min_value=0.0, max_value=200.0, value=20.0, step=5.0)
     st.divider()
-    st.caption("V0.5 adds live comparable-price research via OpenAI web search.")
+    st.markdown("**Valuation hierarchy**")
+    st.markdown(
+        '<div class="small-note">Belgium private → Netherlands private → European used-golf → international support.</div>',
+        unsafe_allow_html=True,
+    )
+    st.divider()
+    st.markdown('<div class="small-note">Market evidence is researched live. Prices are asking/bid evidence unless explicitly identified as sold prices.</div>', unsafe_allow_html=True)
 
-st.title("⛳ Golf Flip Scanner")
-st.caption("Paste an individual 2dehands / 2ememain golf listing and get a market-backed flip analysis.")
+st.markdown("""
+<div class="hero">
+  <div class="hero-kicker">Deal scanner · v0.6</div>
+  <div class="hero-title">Know your number before you buy.</div>
+  <div class="hero-copy">Paste a 2dehands or 2ememain golf listing. FlipGolf identifies the equipment, researches the current second-hand market and gives you a disciplined purchase ceiling.</div>
+</div>
+""", unsafe_allow_html=True)
 
 url = st.text_input(
-    "2dehands listing URL",
-    placeholder="https://www.2dehands.be/v/sport-en-fitness/golf/..."
+    "Listing URL",
+    placeholder="https://www.2dehands.be/v/sport-en-fitness/golf/...",
+    label_visibility="collapsed",
 )
 
-if st.button("Analyze deal", type="primary", use_container_width=True):
+analyze = st.button("Analyse listing", type="primary", use_container_width=True)
+
+if analyze:
     if not url.strip():
         st.warning("Paste an individual listing URL first.")
         st.stop()
 
     try:
-        with st.spinner("Retrieving listing…"):
-            listing = fetch_listing(url.strip())
+        with st.spinner("Reading listing…"):
+            x = fetch_listing(url.strip())
 
-        with st.expander("1. Listing retrieved", expanded=False):
-            st.write("**Title:**", listing["title"] or "Not detected")
-            st.write(
-                "**Listing type:**",
-                "Bidding / auction" if listing["listing_type"] == "auction" else "Fixed price"
-            )
-            st.write(
-                "**Detected price candidates:**",
-                [eur(v) for v in listing["price_candidates"]]
-            )
-            st.write("**Description:**", listing["description"] or "Not detected")
+        st.markdown('<div class="section-label">01 · Listing</div>', unsafe_allow_html=True)
+        st.markdown(f"### {x['title'] or 'Golf listing'}")
+        st.caption("Bidding / auction" if x["listing_type"] == "auction" else "Fixed price listing")
+        if x["description"]:
+            st.write(x["description"])
 
-        with st.spinner("Identifying the exact equipment…"):
-            identification = initial_identification(listing)
+        with st.spinner("Identifying equipment…"):
+            identification = identify_equipment(x)
 
-        st.subheader("2. Equipment identification")
-        e = identification["equipment"]
-        a, b, c, d = st.columns(4)
-        a.metric("Brand / model", f'{e["brand"]} {e["model"]}')
-        b.metric("Set", e["set_composition"])
-        c.metric("Shaft / flex", f'{e["shaft"]} / {e["flex"]}')
-        d.metric("ID confidence", f'{identification["identification_confidence"]:.0f}%')
+        eq = identification["equipment"]
+        st.markdown('<div class="section-label">02 · Equipment</div>', unsafe_allow_html=True)
 
-        with st.expander("Equipment details"):
-            st.json(e)
-            if identification["missing_information"]:
-                st.write("**Missing information:**")
-                for item in identification["missing_information"]:
-                    st.write("•", item)
+        e1, e2, e3, e4 = st.columns(4)
+        e1.markdown(metric_card("Model", f"{eq['brand']} {eq['model']}", eq["category"]), unsafe_allow_html=True)
+        e2.markdown(metric_card("Set", eq["set_composition"], "Composition"), unsafe_allow_html=True)
+        e3.markdown(metric_card("Shaft", eq["shaft"], eq["flex"]), unsafe_allow_html=True)
+        e4.markdown(metric_card("Condition", eq["condition"], f"ID confidence {pct(identification['identification_confidence'])}"), unsafe_allow_html=True)
 
-        with st.spinner("Searching live market comparables…"):
-            research = market_research(e, listing)
+        with st.spinner("Researching current market evidence…"):
+            market = research_market(identification)
 
-        comps = research["comparables"]
-        st.subheader("3. Live market evidence")
+        low = max(0.0, float(market["estimated_sale_low_eur"]))
+        high = max(low, float(market["estimated_sale_high_eur"]))
+        resale = max(0.0, float(market["conservative_sale_eur"]))
+        market_conf = clamp(market["market_confidence"], 0, 100)
 
-        if comps:
-            import pandas as pd
-            rows = []
-            for comp in comps:
-                rows.append({
-                    "Comparable": comp["title"],
-                    "Price": eur(comp["price_eur"]),
-                    "Condition": comp["condition"],
-                    "Similarity": f'{comp["similarity"]:.0f}%',
-                    "Why": comp["why_comparable"],
-                    "Source": comp["source_type"],
-                    "URL": comp["url"],
-                })
-            st.dataframe(
-                pd.DataFrame(rows),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "URL": st.column_config.LinkColumn("Listing", display_text="Open")
-                },
-            )
-        else:
-            st.warning("No usable live comparables were found. The valuation below is therefore low-confidence.")
+        # Cost model. These are deliberately separated from market valuation.
+        platform_cost = 0.0
+        shipping_cost = 15.0
+        selling_cost = 20.0
+        risk_buffer = max(25.0, round((high - low) * 0.35, 0))
+        total_costs = platform_cost + shipping_cost + selling_cost
 
-        st.caption(research["search_summary"])
-
-        resale = float(research["conservative_resale_eur"])
-        costs = max(0.0, float(research["estimated_costs_eur"]))
-        risk = max(0.0, float(research["risk_buffer_eur"]))
-        max_buy, _, _ = calculate(resale, costs, risk, 0, target_profit)
-
+        max_buy = max(0.0, resale - total_costs - risk_buffer - target_profit)
         ask = float(identification["asking_price_eur"])
         bid = float(identification["current_bid_eur"])
 
-        st.subheader("4. Flip economics")
+        st.markdown('<div class="section-label">03 · Market</div>', unsafe_allow_html=True)
+        st.markdown("### What the market says")
 
-        if listing["listing_type"] == "auction":
-            current = bid if bid > 0 else None
+        m1, m2, m3, m4 = st.columns(4)
+        m1.markdown(metric_card("Achievable sale", f"{eur(low)}–{eur(high)}", "Estimated private-sale range"), unsafe_allow_html=True)
+        m2.markdown(metric_card("Conservative resale", eur(resale), "Used for purchase ceiling"), unsafe_allow_html=True)
+        m3.markdown(metric_card("Liquidity", market["liquidity"], market["liquidity_reason"]), unsafe_allow_html=True)
+        m4.markdown(metric_card("Research confidence", pct(market_conf), "Strength of available evidence"), unsafe_allow_html=True)
+
+        if market["market_summary"]:
+            st.info(market["market_summary"])
+
+        st.markdown('<div class="section-label">04 · Comparable evidence</div>', unsafe_allow_html=True)
+        comps = market.get("comps", [])
+        if not comps:
+            st.warning("No sufficiently reliable comparable listings were found. The valuation should be treated as low-confidence.")
+        else:
+            for comp in comps[:8]:
+                title = comp["title"] or "Comparable listing"
+                url2 = comp["url"]
+                link = f"[Open listing]({url2})" if url2.startswith("http") else ""
+                st.markdown(
+                    f"""
+                    <div class="comp">
+                      <div class="comp-head">
+                        <div class="comp-title">{title}</div>
+                        <div class="comp-price">{eur(comp['price_eur'])}</div>
+                      </div>
+                      <div class="comp-meta">
+                        <span class="pill">{comp['market']}</span>
+                        &nbsp; {comp['source_type']} · {comp['price_type']} · {comp['match_pct']:.0f}% match
+                        &nbsp; {link}
+                      </div>
+                      <div class="comp-rationale">{comp['rationale']}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        if market.get("excluded_evidence"):
+            with st.expander("Evidence excluded from valuation"):
+                for item in market["excluded_evidence"]:
+                    st.write("•", item)
+
+        st.markdown('<div class="section-label">05 · Flip economics</div>', unsafe_allow_html=True)
+
+        if x["listing_type"] == "auction":
+            profit_at_ceiling = resale - total_costs - risk_buffer - max_buy
+            roi_at_ceiling = profit_at_ceiling / max_buy * 100 if max_buy else 0
+            current_label = eur(bid) if bid > 0 else "Not shown"
+
             a, b, c, d = st.columns(4)
-            a.metric("Current bid", eur(current) if current else "Not shown")
-            b.metric("Conservative resale", eur(resale))
-            c.metric("Costs + risk", eur(costs + risk))
-            d.metric("Maximum bid", eur(max_buy))
+            a.markdown(metric_card("Current bid", current_label, "Visible on listing" if bid > 0 else "No visible bid"), unsafe_allow_html=True)
+            b.markdown(metric_card("Conservative resale", eur(resale), "Market-backed"), unsafe_allow_html=True)
+            c.markdown(metric_card("Maximum bid", eur(max_buy), "Hard ceiling"), unsafe_allow_html=True)
+            d.markdown(metric_card("Profit at ceiling", eur(profit_at_ceiling), f"ROI {roi_at_ceiling:.0f}%"), unsafe_allow_html=True)
 
-            if current:
-                profit = resale - costs - risk - current
-                roi = profit / current * 100 if current else 0
-                # ROI is part of the user's threshold, but max bid already includes target profit.
-                decision = "BID" if (current <= max_buy and roi >= min_roi) else "PASS"
-                a, b, c = st.columns(3)
-                a.metric("Profit at current bid", eur(profit))
-                b.metric("ROI", f"{roi:.0f}%")
-                c.metric("Valuation confidence", f'{research["valuation_confidence"]:.0f}%')
-                st.markdown(f"## {'🟢' if decision == 'BID' else '🔴'} {decision}")
+            if bid > 0:
+                profit = resale - total_costs - risk_buffer - bid
+                roi = profit / bid * 100 if bid else 0
+                decision = "BID" if bid <= max_buy and roi >= min_roi else "PASS"
+                cls = "ceiling" if decision == "BID" else "pass"
+                subtitle = f"Current bid {eur(bid)} · estimated profit {eur(profit)} · ROI {roi:.0f}%"
             else:
-                st.markdown("## 🎯 MAXIMUM BID")
-                st.metric("Your ceiling", eur(max_buy))
-                st.write("No current bid was visible. Treat the maximum bid as your hard ceiling.")
+                decision = "CEILING"
+                cls = "ceiling"
+                subtitle = "No current bid was visible. Treat the maximum bid as your hard ceiling."
+
         else:
             if ask <= 0:
-                st.error("The app could not reliably determine the fixed asking price.")
+                st.error("The listing appears to be fixed-price, but no reliable asking price was detected.")
                 st.stop()
 
-            profit = resale - costs - risk - ask
+            profit = resale - total_costs - risk_buffer - ask
             roi = profit / ask * 100 if ask else 0
-            decision = decision_for(ask, max_buy) if roi >= min_roi else "PASS"
+            decision = "BUY" if ask <= max_buy and roi >= min_roi else ("NEGOTIATE" if ask <= max_buy * 1.10 else "PASS")
+            cls = {"BUY": "buy", "NEGOTIATE": "negotiate", "PASS": "pass"}[decision]
+            subtitle = f"Asking {eur(ask)} · estimated profit {eur(profit)} · ROI {roi:.0f}%"
 
             a, b, c, d = st.columns(4)
-            a.metric("Asking", eur(ask))
-            b.metric("Conservative resale", eur(resale))
-            c.metric("Maximum buy", eur(max_buy))
-            d.metric("Valuation confidence", f'{research["valuation_confidence"]:.0f}%')
+            a.markdown(metric_card("Asking", eur(ask), "Listing price"), unsafe_allow_html=True)
+            b.markdown(metric_card("Conservative resale", eur(resale), "Market-backed"), unsafe_allow_html=True)
+            c.markdown(metric_card("Maximum buy", eur(max_buy), "Hard ceiling"), unsafe_allow_html=True)
+            d.markdown(metric_card("Profit at asking", eur(profit), f"ROI {roi:.0f}%"), unsafe_allow_html=True)
 
-            a, b = st.columns(2)
-            a.metric("Expected profit", eur(profit))
-            b.metric("ROI", f"{roi:.0f}%")
-
-            icon = {"BUY": "🟢", "NEGOTIATE": "🟠", "PASS": "🔴"}[decision]
-            st.markdown(f"## {icon} {decision}")
-            st.write("**Suggested offer:**", eur(min(max_buy, ask * 0.90)))
-
-        st.subheader("5. Valuation")
-        a, b, c, d = st.columns(4)
-        a.metric("Resale range low", eur(research["estimated_resale_low_eur"]))
-        b.metric("Resale range high", eur(research["estimated_resale_high_eur"]))
-        c.metric("Conservative resale", eur(resale))
-        d.metric("Liquidity", research["liquidity"])
-
-        st.write("**Valuation basis:**", research["valuation_note"])
-        st.write("**Research confidence:**", f'{research["valuation_confidence"]:.0f}%')
-
-        with st.expander("Risk & diligence checklist"):
-            for item in identification["risks"]:
-                st.write("•", item)
-            for item in identification["missing_information"]:
-                st.write("• Missing:", item)
-
-        st.subheader("6. Decision formula")
-        st.code(
-            f"Maximum purchase price = conservative resale ({eur(resale)}) "
-            f"- costs ({eur(costs)}) - risk buffer ({eur(risk)}) "
-            f"- target profit ({eur(target_profit)})\n"
-            f"= {eur(max_buy)}"
+        st.markdown(
+            f'<div class="decision {cls}"><div class="decision-title">{decision}</div><div class="decision-sub">{subtitle}</div></div>',
+            unsafe_allow_html=True,
         )
 
-        st.info(
-            "Live comparables are current asking/bid evidence, not confirmed sale prices. "
-            "Use the scanner as a decision-support tool and verify the listing condition/specs before buying."
+        st.markdown('<div class="section-label">06 · Purchase ceiling</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div class="decision ceiling">
+              <div class="decision-title">{eur(max_buy)}</div>
+              <div class="decision-sub">
+                Conservative resale {eur(resale)} − selling/logistics costs {eur(total_costs)}
+                − risk buffer {eur(risk_buffer)} − target profit {eur(target_profit)}
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div class="section-label">07 · Checks before buying</div>', unsafe_allow_html=True)
+        checks = identification["missing_information"] + identification["risks"]
+        if not checks:
+            st.success("No additional red flags were identified from the listing text.")
+        else:
+            with st.expander("Open checklist", expanded=True):
+                for item in checks:
+                    st.write("•", item)
+
+        with st.expander("Equipment details"):
+            st.json(eq)
+
+        st.caption(
+            "Market prices are observed listing/bid evidence, not guaranteed transaction prices. "
+            "The scanner uses conservative assumptions and should be treated as decision support."
         )
 
     except ValueError as e:
         st.warning(str(e))
     except requests.HTTPError as e:
-        code = e.response.status_code if e.response is not None else "unknown"
-        st.error(f"2dehands could not be retrieved ({code}).")
+        status = e.response.status_code if e.response is not None else "unknown"
+        st.error(f"2dehands could not be retrieved ({status}).")
     except Exception as e:
         st.error(str(e))
