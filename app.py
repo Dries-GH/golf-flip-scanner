@@ -1,415 +1,622 @@
 
 import os
-import re
-import json
-from urllib.parse import urlparse, quote_plus
+from datetime import date, datetime
 
+import pandas as pd
 import requests
-from bs4 import BeautifulSoup
 import streamlit as st
-from openai import OpenAI
 
-MODEL = "gpt-5.6-luna"
-UA = {"User-Agent": "Mozilla/5.0 (compatible; FlipGolf/0.7)",
-      "Accept-Language": "nl-BE,nl;q=0.9,en;q=0.8"}
+import flip_engine as E
+import flip_store as DB
 
-st.set_page_config(page_title="FlipGolf", page_icon="⛳", layout="centered")
+st.set_page_config(page_title="FlipGolf — Sourcing Desk", page_icon="⛳",
+                   layout="wide", initial_sidebar_state="expanded")
+DB.init()
 
-# ----------------------------------------------------------------- style
+# ============================================================ design system
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@700;800&display=swap');
-:root{--ink:#17231f;--muted:#6b7772;--cream:#f4f1e8;--paper:#fff;--line:#e2e6df;
-      --green:#1e4b3b;--green2:#2d6a4f;--orange:#c9752f;--red:#b3403d;}
-html,body,[class*="css"]{font-family:"DM Sans",sans-serif;}
-.stApp{background:var(--cream);color:var(--ink);}
-.block-container{max-width:840px;padding-top:2rem;padding-bottom:4rem;}
-h1,h2,h3{font-family:"Manrope",sans-serif!important;letter-spacing:-.035em;color:var(--ink)!important;}
-#MainMenu,footer{visibility:hidden;}
-.hdr{display:flex;align-items:center;gap:11px;margin-bottom:2px;}
-.mark{width:38px;height:38px;border-radius:11px;background:var(--green);color:#fff;
-      display:flex;align-items:center;justify-content:center;font-size:20px;}
-.name{font-family:"Manrope";font-size:26px;font-weight:800;letter-spacing:-.05em;}
-.tag{color:var(--muted);font-size:13px;margin:0 0 18px 49px;}
-.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:14px 16px;}
-.lbl{color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;font-weight:700;}
-.val{font-family:"Manrope";font-size:23px;font-weight:800;margin-top:5px;}
-.note{color:var(--muted);font-size:11px;margin-top:2px;}
-.verdict{border-radius:14px;padding:17px 20px;margin:14px 0;background:var(--paper);
-         border:1px solid var(--line);border-left:5px solid var(--green2);}
-.verdict .v{font-family:"Manrope";font-size:22px;font-weight:800;}
-.verdict .s{color:var(--muted);font-size:13px;margin-top:3px;}
-.v-BUY{border-left-color:var(--green2);} .v-NEGOTIATE{border-left-color:var(--orange);}
-.v-PASS{border-left-color:var(--red);}
-.row{background:var(--paper);border:1px solid var(--line);border-radius:12px;
-     padding:12px 14px;margin:7px 0;}
-.row-t{display:flex;justify-content:space-between;gap:14px;align-items:baseline;}
-.row-n{font-weight:700;font-size:14px;}
-.row-p{font-family:"Manrope";font-weight:800;white-space:nowrap;}
-.row-m{color:var(--muted);font-size:11px;margin-top:4px;}
-.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#e9efe9;
-      color:var(--green);font-size:10px;font-weight:700;text-transform:uppercase;}
-a{color:var(--green2);}
-div[data-testid="stButton"] button{border-radius:10px!important;font-weight:700!important;min-height:44px;}
-button[kind="primary"]{background:var(--green)!important;border-color:var(--green)!important;}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
+
+:root{
+  --ink:#14201C; --ink2:#3B4A44; --muted:#7A8781; --faint:#A8B2AC;
+  --bg:#FBFAF7; --surface:#FFFFFF; --line:#E6EAE4; --line2:#F0F3EE;
+  --green:#1E4B3B; --green2:#2E6B50; --greenbg:#EDF5EF;
+  --amber:#B57324; --amberbg:#FDF4E7;
+  --red:#A93F3C; --redbg:#FBEEED;
+  --blue:#2C5A78; --bluebg:#EDF3F7;
+}
+
+/* kill streamlit chrome */
+#MainMenu, footer, header[data-testid="stHeader"] {display:none!important;}
+div[data-testid="stToolbar"]{display:none!important;}
+div[data-testid="stDecoration"]{display:none!important;}
+
+html,body,[class*="css"],.stApp{font-family:'Inter',-apple-system,sans-serif;}
+.stApp{background:var(--bg);}
+.block-container{max-width:1240px;padding:1.6rem 2rem 5rem;}
+
+h1,h2,h3,h4{color:var(--ink)!important;letter-spacing:-.02em;font-weight:700;}
+
+/* ---------- force light form controls (fixes dark-theme collision) ---------- */
+.stTextInput input, .stNumberInput input, .stTextArea textarea, .stDateInput input{
+  background:var(--surface)!important; color:var(--ink)!important;
+  border:1px solid #D7DED8!important; border-radius:9px!important;
+  font-size:13.5px!important; box-shadow:none!important;
+}
+.stTextInput input:focus, .stNumberInput input:focus{
+  border-color:var(--green2)!important; box-shadow:0 0 0 3px rgba(46,107,80,.12)!important;
+}
+.stTextInput input::placeholder{color:var(--faint)!important;}
+div[data-testid="stWidgetLabel"] p, label p{
+  color:var(--ink2)!important; font-size:11px!important; font-weight:600!important;
+  text-transform:uppercase; letter-spacing:.07em;
+}
+div[data-testid="stNumberInput"] button{
+  background:var(--line2)!important; border:1px solid #D7DED8!important; color:var(--ink2)!important;
+}
+div[data-baseweb="select"]>div{
+  background:var(--surface)!important; border:1px solid #D7DED8!important;
+  border-radius:9px!important; color:var(--ink)!important; font-size:13.5px!important;
+}
+div[data-testid="stSelectbox"] svg{fill:var(--muted)!important;}
+
+/* segmented control / radio as pills */
+div[role="radiogroup"]{gap:6px!important; flex-wrap:wrap;}
+div[role="radiogroup"] label{
+  background:var(--surface)!important; border:1px solid #D9E0DA!important;
+  border-radius:999px!important; padding:6px 14px!important; margin:0!important;
+  font-size:12.5px!important; font-weight:600!important; color:var(--ink2)!important;
+  cursor:pointer; transition:.12s;
+}
+div[role="radiogroup"] label:hover{border-color:var(--green2)!important;}
+div[role="radiogroup"] label[data-checked="true"], div[role="radiogroup"] label:has(input:checked){
+  background:var(--green)!important; border-color:var(--green)!important; color:#fff!important;
+}
+div[role="radiogroup"] label > div:first-child{display:none!important;}
+div[role="radiogroup"] label p{color:inherit!important;text-transform:none!important;
+  font-size:12.5px!important;letter-spacing:0!important;}
+
+/* buttons */
+div[data-testid="stButton"] button{
+  border-radius:9px!important; font-weight:600!important; font-size:13.5px!important;
+  min-height:42px; border:1px solid #D7DED8!important; background:var(--surface)!important;
+  color:var(--ink)!important; transition:.12s;
+}
+div[data-testid="stButton"] button:hover{border-color:var(--green2)!important;}
+button[kind="primary"]{
+  background:var(--green)!important; border-color:var(--green)!important; color:#fff!important;
+}
+button[kind="primary"]:hover{background:#163A2D!important;}
+
+/* tabs */
+div[data-baseweb="tab-list"]{
+  gap:2px; background:transparent; border-bottom:1px solid var(--line); margin-bottom:22px;
+}
+button[data-baseweb="tab"]{
+  background:transparent!important; border:none!important; padding:10px 16px!important;
+  font-size:13.5px!important; font-weight:600!important; color:var(--muted)!important;
+}
+button[data-baseweb="tab"][aria-selected="true"]{color:var(--green)!important;}
+div[data-baseweb="tab-highlight"]{background:var(--green)!important;height:2px!important;}
+
+/* sidebar */
+section[data-testid="stSidebar"]{background:#F5F6F2!important;border-right:1px solid var(--line);}
+section[data-testid="stSidebar"] .block-container{padding-top:1.5rem;}
+section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] label p{color:var(--ink2)!important;}
+
+/* ---------- components ---------- */
+.topbar{display:flex;align-items:center;justify-content:space-between;
+  padding-bottom:16px;border-bottom:1px solid var(--line);margin-bottom:22px;}
+.logo{display:flex;align-items:center;gap:11px;}
+.logo-m{width:34px;height:34px;border-radius:9px;background:var(--green);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:17px;}
+.logo-t{font-family:'Fraunces',serif;font-size:20px;font-weight:700;color:var(--ink);letter-spacing:-.01em;}
+.logo-s{font-size:11px;color:var(--muted);margin-top:-2px;}
+
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:6px;}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:13px 15px;}
+.kpi-l{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);}
+.kpi-v{font-size:22px;font-weight:700;color:var(--ink);margin-top:5px;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;}
+.kpi-n{font-size:11px;color:var(--faint);margin-top:1px;}
+.kpi-v.pos{color:var(--green2);} .kpi-v.neg{color:var(--red);}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:13px;
+  padding:18px 20px;margin-bottom:14px;}
+.panel-h{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--muted);margin-bottom:13px;padding-bottom:9px;border-bottom:1px solid var(--line2);}
+
+.verdict{border-radius:13px;padding:17px 20px;margin-bottom:14px;display:flex;
+  align-items:center;justify-content:space-between;gap:18px;}
+.v-BUY{background:var(--greenbg);border:1px solid #C9E2D1;}
+.v-NEGOTIATE{background:var(--amberbg);border:1px solid #F0DCBB;}
+.v-PASS{background:var(--redbg);border:1px solid #EFCFCD;}
+.v-SETCEILING{background:var(--bluebg);border:1px solid #CCDFEA;}
+.v-tag{font-family:'Fraunces',serif;font-size:27px;font-weight:700;letter-spacing:-.02em;line-height:1;}
+.v-BUY .v-tag{color:var(--green);} .v-NEGOTIATE .v-tag{color:var(--amber);}
+.v-PASS .v-tag{color:var(--red);} .v-SETCEILING .v-tag{color:var(--blue);}
+.v-why{font-size:13px;color:var(--ink2);margin-top:5px;}
+.v-right{text-align:right;flex-shrink:0;}
+.v-big{font-size:25px;font-weight:700;color:var(--ink);letter-spacing:-.02em;font-variant-numeric:tabular-nums;}
+.v-sm{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:600;}
+
+.spec{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line2);font-size:13px;}
+.spec:last-child{border:none;}
+.spec-k{color:var(--muted);} .spec-v{color:var(--ink);font-weight:500;text-align:right;}
+
+.waterfall{display:flex;align-items:flex-end;gap:3px;height:74px;margin:6px 0 10px;}
+.wf{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:4px;}
+.wf-bar{width:100%;border-radius:4px 4px 0 0;}
+.wf-l{font-size:9px;color:var(--muted);text-align:center;line-height:1.2;}
+.wf-v{font-size:10.5px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;}
+
+.deal{background:var(--surface);border:1px solid var(--line);border-radius:11px;
+  padding:13px 15px;margin-bottom:8px;transition:.12s;}
+.deal:hover{border-color:#C9D3CB;box-shadow:0 2px 10px rgba(20,32,28,.05);}
+.deal-t{display:flex;justify-content:space-between;gap:14px;align-items:baseline;}
+.deal-n{font-size:14px;font-weight:600;color:var(--ink);}
+.deal-p{font-size:16px;font-weight:700;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.deal-m{font-size:11.5px;color:var(--muted);margin-top:6px;display:flex;align-items:center;
+  gap:9px;flex-wrap:wrap;}
+.deal-w{font-size:12px;color:var(--ink2);margin-top:6px;font-style:italic;}
+
+.bar{height:4px;background:var(--line2);border-radius:2px;overflow:hidden;width:54px;display:inline-block;
+  vertical-align:middle;}
+.bar>span{display:block;height:100%;background:var(--green2);}
+
+.tag{display:inline-block;padding:2.5px 8px;border-radius:5px;font-size:10px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.05em;}
+.t-g{background:var(--greenbg);color:var(--green);}
+.t-a{background:var(--amberbg);color:var(--amber);}
+.t-r{background:var(--redbg);color:var(--red);}
+.t-b{background:var(--bluebg);color:var(--blue);}
+.t-n{background:var(--line2);color:var(--ink2);}
+
+.comp{padding:11px 0;border-bottom:1px solid var(--line2);}
+.comp:last-child{border:none;}
+.comp-t{display:flex;justify-content:space-between;gap:12px;align-items:baseline;}
+.comp-n{font-size:12.5px;color:var(--ink);font-weight:500;}
+.comp-p{font-size:13.5px;font-weight:700;color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.comp-m{font-size:10.5px;color:var(--muted);margin-top:4px;}
+.comp-m a{color:var(--green2);text-decoration:none;} .comp-m a:hover{text-decoration:underline;}
+
+.msg{background:#F7F9F6;border:1px solid var(--line);border-left:3px solid var(--green2);
+  border-radius:8px;padding:12px 14px;font-size:13px;color:var(--ink2);line-height:1.6;white-space:pre-wrap;}
+.empty{text-align:center;padding:46px 20px;color:var(--muted);}
+.empty-i{font-size:30px;margin-bottom:10px;opacity:.5;}
+.empty-t{font-size:14px;font-weight:600;color:var(--ink2);}
+.empty-s{font-size:12.5px;margin-top:5px;}
+.hint{font-size:11.5px;color:var(--faint);line-height:1.55;}
+div[data-testid="stDataFrame"]{border:1px solid var(--line)!important;border-radius:10px!important;}
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------------------------------------------------------- helpers
-def secret(n):
-    try: return st.secrets.get(n, os.getenv(n, ""))
-    except Exception: return os.getenv(n, "")
+# ============================================================ helpers
+def eur(v, dash="—"):
+    if v is None:
+        return dash
+    return "€{:,.0f}".format(float(v)).replace(",", ".")
 
-def parse_euro(v):
-    if v is None: return None
-    s = re.sub(r"[^\d,.\-]", "", str(v))
-    if not s: return None
-    if "," in s and "." in s:
-        s = s.replace(".", "").replace(",", ".") if s.rfind(",") > s.rfind(".") else s.replace(",", "")
-    elif "," in s:
-        s = s.replace(",", ".")
-    try: return float(s)
-    except Exception: return None
+def api_key():
+    try:
+        return st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", ""))
+    except Exception:
+        return os.getenv("OPENAI_API_KEY", "")
 
-def eur(v):
-    return "—" if v is None else "€{:,.0f}".format(float(v)).replace(",", ".")
+def kpi(label, value, note="", cls=""):
+    return (f'<div class="kpi"><div class="kpi-l">{label}</div>'
+            f'<div class="kpi-v {cls}">{value}</div><div class="kpi-n">{note}</div></div>')
 
-def clamp(v, lo, hi): return max(lo, min(hi, float(v)))
+def spec(k, v):
+    return f'<div class="spec"><span class="spec-k">{k}</span><span class="spec-v">{v}</span></div>'
 
-def card(label, value, note=""):
-    return f'<div class="card"><div class="lbl">{label}</div><div class="val">{value}</div><div class="note">{note}</div></div>'
+def liq_tag(l):
+    return {"high": "t-g", "medium": "t-a", "low": "t-r"}.get(str(l).lower(), "t-n")
 
-def client():
-    k = secret("OPENAI_API_KEY")
-    if not k:
-        st.error("OPENAI_API_KEY is not set in Streamlit Secrets.")
-        st.stop()
-    return OpenAI(api_key=k)
-
-# ----------------------------------------------------------------- scraping
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_listing(url):
-    p = urlparse(url)
-    if p.scheme not in ("http", "https"):
-        raise ValueError("Paste a full https:// link.")
-    if not any(d in p.netloc.lower() for d in ("2dehands.be", "2ememain.be")):
-        raise ValueError("Use a 2dehands.be or 2ememain.be link.")
-    if "/v/" not in p.path.lower():
-        raise ValueError("Paste one individual listing, not a search page.")
-    r = requests.get(url, headers=UA, timeout=20); r.raise_for_status()
-    s = BeautifulSoup(r.text, "html.parser")
-    def og(k):
-        t = s.find("meta", property=k)
-        return t.get("content", "").strip() if t else ""
-    title, desc, prices = og("og:title"), og("og:description"), []
-    if not title and s.title: title = s.title.get_text(" ", strip=True)
-    for t in s.find_all("script", type="application/ld+json"):
-        try: d = json.loads(t.string or t.get_text())
-        except Exception: continue
-        for o in (d if isinstance(d, list) else [d]):
-            if isinstance(o, dict):
-                title = title or str(o.get("name", ""))
-                desc = desc or str(o.get("description", ""))
-                offers = o.get("offers", [])
-                for x in (offers if isinstance(offers, list) else [offers]):
-                    if isinstance(x, dict):
-                        q = parse_euro(x.get("price"))
-                        if q and q > 0: prices.append(q)
-    text = s.get_text("\n", strip=True)
-    for m in re.findall(r"€\s*(\d[\d.\s]*(?:,\d{1,2})?)", text):
-        q = parse_euro(m)
-        if q and q >= 5: prices.append(q)
-    img = og("og:image")
-    return {"url": url, "title": title, "description": desc, "image": img,
-            "prices": list(dict.fromkeys(prices))[:12],
-            "text": text[:14000],
-            "type": "auction" if "bieden" in text.lower() else "fixed"}
+def c_fetch(u): return E.fetch_listing(u)
 
 @st.cache_data(ttl=900, show_spinner=False)
-def search_2dehands(query, min_p, max_p, limit=40):
-    base = "https://www.2dehands.be"
-    url = f"{base}/l/sport-en-fitness/golf/q/{quote_plus(query)}/"
-    if min_p or max_p:
-        url += f"#PriceCentsFrom:{int((min_p or 0)*100)}|PriceCentsTo:{int((max_p or 99999)*100)}"
-    r = requests.get(url, headers=UA, timeout=25); r.raise_for_status()
-    s = BeautifulSoup(r.text, "html.parser")
-    out, seen = [], set()
-    for a in s.find_all("a", href=True):
-        if "/v/" not in a["href"]: continue
-        u = (a["href"] if a["href"].startswith("http") else base + a["href"]).split("?")[0]
-        if u in seen: continue
-        blk, n = None, a
-        for _ in range(4):
-            n = n.parent
-            if n is None: break
-            if "€" in n.get_text() or "ieden" in n.get_text(): blk = n; break
-        txt = blk.get_text(" ", strip=True) if blk else a.get_text(" ", strip=True)
-        title = a.get_text(" ", strip=True)
-        if len(title) < 5 and blk:
-            h = blk.find(["h2", "h3"])
-            title = h.get_text(" ", strip=True) if h else title
-        if len(title) < 5: continue
-        m = re.search(r"€\s*([\d.\s]*\d(?:,\d{1,2})?)", txt)
-        price = parse_euro(m.group(1)) if m else None
-        if price is not None:
-            if min_p and price < min_p: continue
-            if max_p and price > max_p: continue
-        seen.add(u)
-        out.append({"title": title[:130], "price": price,
-                    "bidding": price is None and "ieden" in txt.lower(),
-                    "url": u, "blurb": txt[:200]})
-        if len(out) >= limit: break
-    return out
+def c_search(q, lo, hi, lim): return E.search_listings(q, lo, hi, lim)
 
-# ----------------------------------------------------------------- AI
-IDENT = {
-    "type": "object",
-    "properties": {
-        "brand": {"type": "string"}, "model": {"type": "string"},
-        "category": {"type": "string"}, "specs": {"type": "string"},
-        "condition": {"type": "string"},
-        "price_eur": {"type": "number"},
-        "confidence": {"type": "number"},
-        "checks": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["brand","model","category","specs","condition","price_eur","confidence","checks"],
-    "additionalProperties": False,
-}
+@st.cache_data(ttl=3600, show_spinner=False)
+def c_identify(k, x): return E.identify(k, x)
 
-VALUE = {
-    "type": "object",
-    "properties": {
-        "low_eur": {"type": "number"}, "high_eur": {"type": "number"},
-        "likely_eur": {"type": "number"},
-        "confidence": {"type": "number"},
-        "liquidity": {"type": "string"},
-        "summary": {"type": "string"},
-        "comps": {"type": "array", "items": {
-            "type": "object",
-            "properties": {"title": {"type": "string"}, "price_eur": {"type": "number"},
-                           "source": {"type": "string"}, "kind": {"type": "string"},
-                           "url": {"type": "string"}},
-            "required": ["title","price_eur","source","kind","url"],
-            "additionalProperties": False}},
-    },
-    "required": ["low_eur","high_eur","likely_eur","confidence","liquidity","summary","comps"],
-    "additionalProperties": False,
-}
+@st.cache_data(ttl=3600, show_spinner=False)
+def c_value(k, eq, loc): return E.value(k, eq, loc)
 
-def ai_identify(x):
-    prompt = f"""Identify the used golf equipment in this Belgian 2dehands listing.
-Never invent specs - use "Unknown" if absent. Listing type: {x['type']}.
-price_eur = the actual asking price (or current bid). Euro amounts detected on the page: {x['prices']}.
-If auction with no visible bid, price_eur = 0.
-checks = short practical things to verify before buying (authenticity, wear, completeness).
+def waterfall(likely, costs, buffer, target, ceiling):
+    segs = [("Resale", likely, "#2E6B50"), ("Costs", -costs, "#B57324"),
+            ("Buffer", -buffer, "#A93F3C"), ("Profit", -target, "#2C5A78"),
+            ("Max buy", ceiling, "#1E4B3B")]
+    mx = max(likely, 1)
+    h = "".join(
+        f'<div class="wf"><div class="wf-v">{eur(abs(v))}</div>'
+        f'<div class="wf-bar" style="height:{max(abs(v)/mx*100,3):.0f}%;background:{c};"></div>'
+        f'<div class="wf-l">{n}</div></div>' for n, v, c in segs)
+    return f'<div class="waterfall">{h}</div>'
 
-TITLE: {x['title']}
-DESCRIPTION: {x['description']}
-PAGE: {x['text'][:9000]}"""
-    r = client().responses.create(
-        model=MODEL, input=prompt,
-        text={"format": {"type": "json_schema", "name": "ident", "schema": IDENT, "strict": True}})
-    return json.loads(r.output_text)
+# ============================================================ topbar
+K = DB.kpis()
+st.markdown(f"""
+<div class="topbar">
+  <div class="logo"><div class="logo-m">⛳</div>
+    <div><div class="logo-t">FlipGolf</div>
+    <div class="logo-s">Sourcing desk · Antwerp</div></div></div>
+  <div style="text-align:right">
+    <div class="kpi-l">Realised profit</div>
+    <div style="font-size:19px;font-weight:700;color:{'#2E6B50' if K['realized']>=0 else '#A93F3C'};
+      font-variant-numeric:tabular-nums;">{eur(K['realized'])}</div>
+  </div>
+</div>""", unsafe_allow_html=True)
 
-def ai_value(eq):
-    prompt = f"""Research the current second-hand market value in Europe for:
-{eq['brand']} {eq['model']} ({eq['category']}) - {eq['specs']} - condition: {eq['condition']}
-
-Rules:
-- Weight evidence: Belgium private (2dehands/2ememain) > Netherlands private (Marktplaats) > European used-golf retailers > eBay/international (support only).
-- Never use new retail price as a resale comp.
-- Never invent a URL or price. Exclude anything you cannot verify.
-- likely_eur = realistic achievable private-sale price in Belgium, inside low..high. Not the highest asking price.
-- confidence 0-100 = strength of evidence. If thin, say so and widen the range.
-- liquidity = one of "high", "medium", "low" with how fast this sells privately.
-- summary = max 2 sentences, plain language.
-- Return up to 5 comps, real URLs only."""
-    r = client().responses.create(
-        model=MODEL,
-        tools=[{"type": "web_search", "search_context_size": "high"}],
-        input=prompt,
-        text={"format": {"type": "json_schema", "name": "value", "schema": VALUE, "strict": True}})
-    return json.loads(r.output_text)
-
-SCREEN = {
-    "type": "object",
-    "properties": {"picks": {"type": "array", "items": {
-        "type": "object",
-        "properties": {"url": {"type": "string"}, "item": {"type": "string"},
-                       "price_eur": {"type": "number"},
-                       "est_resale_eur": {"type": "number"},
-                       "est_profit_eur": {"type": "number"},
-                       "score": {"type": "number"},
-                       "why": {"type": "string"}},
-        "required": ["url","item","price_eur","est_resale_eur","est_profit_eur","score","why"],
-        "additionalProperties": False}}},
-    "required": ["picks"],
-    "additionalProperties": False,
-}
-
-def ai_screen(rows, target_profit, max_budget):
-    listings = json.dumps([{"i": i, "title": r["title"], "price": r["price"],
-                            "bidding": r["bidding"], "url": r["url"]}
-                           for i, r in enumerate(rows)], ensure_ascii=False)
-    prompt = f"""You are triaging live 2dehands golf listings for a Belgian flipper.
-Budget per item: max €{max_budget:.0f}. Target profit: €{target_profit:.0f}+.
-
-For each listing judge from the title/price whether it is plausibly underpriced versus the
-European second-hand market. Use your knowledge of used golf pricing; you do not need to search.
-
-Rules:
-- Only return listings with plausible profit >= €{target_profit:.0f} after ~€35 of costs.
-- Ignore: golf balls in bulk, tees, gloves, clothing, trolleys under €40, junior sets, unbranded/vintage clubs.
-- Skip anything you cannot identify as a specific branded club/set.
-- Be sceptical: a cheap price on an unclear listing is usually a bad club, not a bargain.
-- score 0-100 = how attractive the flip is.
-- est_resale_eur = realistic Belgian private-sale price. est_profit_eur = est_resale - price - 35.
-- why = max 12 words.
-- Copy the url exactly from the input. Return at most 8 picks, best first. Empty list is fine.
-
-LISTINGS: {listings}"""
-    r = client().responses.create(
-        model=MODEL, input=prompt,
-        text={"format": {"type": "json_schema", "name": "screen", "schema": SCREEN, "strict": True}})
-    return json.loads(r.output_text)["picks"]
-
-# ----------------------------------------------------------------- maths
-def economics(v, price, costs, target_profit, min_roi):
-    low = max(0.0, float(v["low_eur"]))
-    high = max(low, float(v["high_eur"]))
-    likely = clamp(v["likely_eur"] or (low + high) / 2, low, high)   # fix: always in range
-    conf = clamp(v["confidence"], 0, 100)
-    buffer = round(likely * (0.20 - 0.12 * conf / 100))              # fix: driven by confidence
-    ceiling = max(0.0, likely - costs - buffer - target_profit)
-    profit = likely - costs - buffer - price
-    roi = (profit / price * 100) if price else 0.0
-    if price <= 0:                                  v = "CEILING"
-    elif price <= ceiling and roi >= min_roi:       v = "BUY"
-    elif price <= ceiling * 1.12:                   v = "NEGOTIATE"
-    else:                                           v = "PASS"
-    return dict(low=low, high=high, likely=likely, conf=conf, buffer=buffer,
-                ceiling=ceiling, profit=profit, roi=roi, verdict=v)
-
-# ----------------------------------------------------------------- ui
-st.markdown('<div class="hdr"><div class="mark">⛳</div><div class="name">FlipGolf</div></div>'
-            '<div class="tag">Used golf. Bought with a margin.</div>', unsafe_allow_html=True)
-
+# ============================================================ sidebar
 with st.sidebar:
-    st.markdown("#### Settings")
-    target_profit = st.number_input("Target profit (€)", 0.0, 1000.0, 75.0, 5.0)
-    min_roi = st.number_input("Minimum ROI (%)", 0.0, 200.0, 20.0, 5.0)
-    costs = st.number_input("Costs per flip (€)", 0.0, 300.0, 35.0, 5.0,
-                            help="Shipping, packaging, travel, fees. Use 0 for local pickup.")
-    st.caption("Ceiling = likely resale − costs − risk buffer − target profit. "
-               "The buffer shrinks as research confidence rises.")
+    st.markdown("**Deal parameters**")
+    target_profit = st.number_input("Target profit (€)", 0.0, 2000.0, 75.0, 5.0)
+    min_roi = st.number_input("Minimum ROI (%)", 0.0, 300.0, 25.0, 5.0)
+    costs = st.number_input("Costs per flip (€)", 0.0, 500.0, 35.0, 5.0)
+    st.markdown('<div class="hint">Shipping, packaging, travel and selling fees. '
+                'Use 0 for local pickup in Antwerp.</div>', unsafe_allow_html=True)
+    st.divider()
+    st.markdown("**Max buy price**")
+    st.markdown('<div class="hint">Likely resale − costs − risk buffer − target profit.<br><br>'
+                'The risk buffer widens when market evidence is thin or the item is illiquid, '
+                'so uncertain deals need a bigger discount.</div>', unsafe_allow_html=True)
+    st.divider()
+    if api_key():
+        st.markdown('<span class="tag t-g">AI connected</span>', unsafe_allow_html=True)
+    else:
+        st.markdown('<span class="tag t-r">No API key</span>', unsafe_allow_html=True)
+        st.caption("Add OPENAI_API_KEY in Streamlit Secrets.")
 
-t1, t2 = st.tabs(["Analyse a listing", "Screen the market"])
+T1, T2, T3, T4 = st.tabs(["Analyse", "Market screen", "Pipeline", "Performance"])
 
-# ---------------- TAB 1
-with t1:
-    url = st.text_input("2dehands listing URL", placeholder="https://www.2dehands.be/v/...",
-                        label_visibility="collapsed")
-    if st.button("Analyse", type="primary", use_container_width=True):
-        if not url.strip():
-            st.warning("Paste a listing link first.")
-        else:
-            try:
-                with st.spinner("Reading listing…"):
-                    x = fetch_listing(url.strip())
-                with st.spinner("Identifying equipment…"):
-                    eq = ai_identify(x)
-                with st.spinner("Researching the market…"):
-                    v = ai_value(eq)
+# ============================================================ TAB 1 · ANALYSE
+with T1:
+    c1, c2 = st.columns([5, 1])
+    url = c1.text_input("Listing URL", placeholder="https://www.2dehands.be/v/sport-en-fitness/golf/...",
+                        label_visibility="collapsed", key="an_url")
+    run = c2.button("Analyse", type="primary", use_container_width=True)
 
-                price = float(eq["price_eur"])
-                e = economics(v, price, costs, target_profit, min_roi)
-
-                st.markdown(f"**{eq['brand']} {eq['model']}** · {eq['category']}")
-                st.caption(f"{eq['specs']} · condition: {eq['condition']} · "
-                           f"{'auction' if x['type']=='auction' else 'fixed price'} · "
-                           f"ID confidence {eq['confidence']:.0f}%")
-
-                c = st.columns(4)
-                c[0].markdown(card("Price", eur(price) if price else "No bid"), unsafe_allow_html=True)
-                c[1].markdown(card("Likely resale", eur(e["likely"]), f"range {eur(e['low'])}–{eur(e['high'])}"), unsafe_allow_html=True)
-                c[2].markdown(card("Max buy", eur(e["ceiling"]), "your hard ceiling"), unsafe_allow_html=True)
-                c[3].markdown(card("Profit", eur(e["profit"]) if price else "—",
-                                   f"ROI {e['roi']:.0f}%" if price else "no price yet"), unsafe_allow_html=True)
-
-                sub = (f"Price {eur(price)} · profit {eur(e['profit'])} · ROI {e['roi']:.0f}%"
-                       if price else f"No visible bid. Do not go above {eur(e['ceiling'])}.")
-                st.markdown(f'<div class="verdict v-{e["verdict"]}"><div class="v">{e["verdict"]}</div>'
-                            f'<div class="s">{sub}</div></div>', unsafe_allow_html=True)
-
-                st.caption(f"{v['summary']}  ·  liquidity: {v['liquidity']}  ·  "
-                           f"research confidence {e['conf']:.0f}%  ·  risk buffer {eur(e['buffer'])}")
-
-                if v["comps"]:
-                    st.markdown("**Comparable evidence**")
-                    for cp in v["comps"][:5]:
-                        link = (f'<a href="{cp["url"]}" target="_blank">source</a>'
-                                if str(cp["url"]).startswith("http") else "")   # fix: real HTML link
-                        st.markdown(f'<div class="row"><div class="row-t">'
-                                    f'<div class="row-n">{cp["title"]}</div>'
-                                    f'<div class="row-p">{eur(cp["price_eur"])}</div></div>'
-                                    f'<div class="row-m"><span class="pill">{cp["source"]}</span> '
-                                    f'&nbsp;{cp["kind"]} &nbsp;{link}</div></div>',
-                                    unsafe_allow_html=True)
-                else:
-                    st.warning("No verifiable comps found — treat this valuation as low confidence.")
-
-                if eq["checks"]:
-                    with st.expander("Check before buying", expanded=True):
-                        for i in eq["checks"]: st.write("•", i)
-
-            except ValueError as e:  st.warning(str(e))
-            except requests.HTTPError as e:
-                st.error(f"2dehands could not be reached ({getattr(e.response,'status_code','?')}).")
-            except Exception as e:   st.error(str(e))
-
-# ---------------- TAB 2
-with t2:
-    st.caption("Scans live 2dehands golf listings and shows only the ones worth a second look.")
-    a, b, c = st.columns([2, 1, 1])
-    q = a.text_input("Search", value="golf", label_visibility="collapsed")
-    lo = b.number_input("Min €", 0.0, 5000.0, 50.0, 10.0)
-    hi = c.number_input("Max €", 0.0, 5000.0, 600.0, 10.0)
-
-    quick = st.radio("Preset", ["Custom", "Drivers", "Iron sets", "Putters", "Full bags"],
-                     horizontal=True, index=0)
-    preset = {"Drivers": "driver", "Iron sets": "ijzers set",
-              "Putters": "putter", "Full bags": "golfset"}.get(quick)
-
-    if st.button("Screen market", type="primary", use_container_width=True):
-        term = preset or q
+    if run and not url.strip():
+        st.warning("Paste a 2dehands listing link first.")
+    elif run:
         try:
-            with st.spinner(f"Scanning 2dehands for “{term}”…"):
-                rows = search_2dehands(term, lo, hi)
-            if not rows:
-                st.warning("Nothing found — try a broader term or wider price range.")
+            with st.spinner("Reading listing…"):
+                x = c_fetch(url.strip())
+            with st.spinner("Identifying equipment…"):
+                eq = c_identify(api_key(), x)
+
+            if not eq["is_golf_equipment"]:
+                st.error("This does not look like sellable golf equipment.")
+                st.stop()
+
+            with st.spinner("Researching the market…"):
+                v = c_value(api_key(), eq, x["location"])
+
+            price = float(eq["price_eur"])
+            ec = E.economics(v, price, costs, target_profit, min_roi)
+            st.session_state.an = {"x": x, "eq": eq, "v": v, "ec": ec, "price": price}
+        except ValueError as err:
+            st.warning(str(err))
+        except requests.HTTPError as err:
+            st.error(f"2dehands could not be reached ({getattr(err.response,'status_code','?')}).")
+        except Exception as err:
+            st.error(f"{type(err).__name__}: {err}")
+
+    A = st.session_state.get("an")
+    if not A:
+        st.markdown('<div class="empty"><div class="empty-i">⛳</div>'
+                    '<div class="empty-t">Paste a listing to value it</div>'
+                    '<div class="empty-s">FlipGolf identifies the equipment, researches live European '
+                    'market evidence and returns a disciplined maximum buy price.</div></div>',
+                    unsafe_allow_html=True)
+    else:
+        x, eq, v, ec, price = A["x"], A["eq"], A["v"], A["ec"], A["price"]
+        vc = ec["verdict"].replace(" ", "")
+
+        st.markdown(f"""<div class="verdict v-{vc}">
+          <div><div class="v-tag">{ec['verdict']}</div><div class="v-why">{ec['why']}</div></div>
+          <div class="v-right"><div class="v-big">{eur(ec['ceiling'])}</div>
+          <div class="v-sm">Max buy price</div></div></div>""", unsafe_allow_html=True)
+
+        st.markdown('<div class="kpi-row">'
+            + kpi("Asking", eur(price) if price else "No bid",
+                  x["listing_type"].title() + " listing")
+            + kpi("Likely resale", eur(ec["likely"]), f"range {eur(ec['low'])}–{eur(ec['high'])}")
+            + kpi("Profit at asking", eur(ec["profit"]) if price else "—",
+                  f"ROI {ec['roi']:.0f}%" if price else "no price yet",
+                  "pos" if ec["profit"] > 0 else "neg")
+            + kpi("Evidence", f"{ec['conf']:.0f}%", f"buffer {eur(ec['buffer'])} ({ec['buf_rate']:.0f}%)")
+            + kpi("Liquidity", str(v["liquidity"]).title(), f"~{v['days_to_sell']:.0f} days to sell")
+            + '</div>', unsafe_allow_html=True)
+
+        L, R = st.columns([3, 2])
+
+        with L:
+            st.markdown('<div class="panel"><div class="panel-h">Equipment</div>'
+                + spec("Brand / model", f"{eq['brand']} {eq['model']}")
+                + spec("Category", eq["category"])
+                + spec("Generation", eq["generation_year"])
+                + spec("Specification", eq["specs"])
+                + spec("Set", eq["set_composition"])
+                + spec("Condition", f"{eq['condition_grade']} — {eq['condition']}")
+                + spec("Location", x["location"] or "Not stated")
+                + spec("ID confidence", f"{eq['confidence']:.0f}%")
+                + '</div>', unsafe_allow_html=True)
+
+            st.markdown(f'<div class="panel"><div class="panel-h">Market evidence '
+                        f'· {len(v["comps"])} comparables</div>', unsafe_allow_html=True)
+            if v["comps"]:
+                rows = ""
+                for c in sorted(v["comps"], key=lambda z: -z["match_pct"])[:6]:
+                    link = (f'<a href="{c["url"]}" target="_blank">view source ↗</a>'
+                            if str(c["url"]).startswith("http") else '<span>no link</span>')
+                    rows += (f'<div class="comp"><div class="comp-t">'
+                             f'<div class="comp-n">{c["title"]}</div>'
+                             f'<div class="comp-p">{eur(c["price_eur"])}</div></div>'
+                             f'<div class="comp-m"><span class="tag t-n">{c["market"]}</span> '
+                             f'{c["source"]} · {c["kind"]} · {c["match_pct"]:.0f}% match · {link}</div></div>')
+                st.markdown(rows, unsafe_allow_html=True)
             else:
-                st.caption(f"{len(rows)} listings found. Triaging…")
-                with st.spinner("AI is picking the deals…"):
-                    picks = ai_screen(rows, target_profit, hi)
-                if not picks:
-                    st.info("No listing looked clearly underpriced right now. "
-                            "That is a normal result — try again later or widen the range.")
-                else:
-                    st.success(f"{len(picks)} worth a look")
-                    for p in sorted(picks, key=lambda z: -z["score"]):
-                        st.markdown(
-                            f'<div class="row"><div class="row-t">'
-                            f'<div class="row-n">{p["item"]}</div>'
-                            f'<div class="row-p">{eur(p["price_eur"])}</div></div>'
-                            f'<div class="row-m"><span class="pill">score {p["score"]:.0f}</span> '
-                            f'&nbsp;est. resale {eur(p["est_resale_eur"])} · '
-                            f'profit ~{eur(p["est_profit_eur"])} &nbsp;'
-                            f'<a href="{p["url"]}" target="_blank">open listing</a></div>'
-                            f'<div class="row-m">{p["why"]}</div></div>',
-                            unsafe_allow_html=True)
-                    st.caption("Screening is a rough filter from titles and prices only. "
-                               "Paste a promising link into the Analyse tab for real market research.")
-        except requests.HTTPError as e:
-            st.error(f"2dehands could not be reached ({getattr(e.response,'status_code','?')}).")
-        except Exception as e:
-            st.error(str(e))
+                st.markdown('<div class="hint">No verifiable comparables were found. '
+                            'Treat this valuation as low confidence.</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with R:
+            st.markdown('<div class="panel"><div class="panel-h">How the ceiling is built</div>'
+                        + waterfall(ec["likely"], costs, ec["buffer"], target_profit, ec["ceiling"])
+                        + f'<div class="hint">{eur(ec["likely"])} resale − {eur(costs)} costs '
+                          f'− {eur(ec["buffer"])} risk buffer − {eur(target_profit)} target profit '
+                          f'= <b>{eur(ec["ceiling"])}</b></div></div>', unsafe_allow_html=True)
+
+            st.markdown(f'<div class="panel"><div class="panel-h">Assessment</div>'
+                        f'<div style="font-size:13px;color:var(--ink2);line-height:1.6">{v["summary"]}</div>'
+                        f'<div style="margin-top:11px">{spec("Best channel", v["best_channel"])}'
+                        f'{spec("Demand", v["demand_note"])}</div></div>', unsafe_allow_html=True)
+
+            if eq["risks"]:
+                st.markdown('<div class="panel"><div class="panel-h">Risks</div>'
+                    + "".join(f'<div style="font-size:12.5px;color:var(--ink2);padding:4px 0">'
+                              f'<span class="tag t-r">!</span> {r}</div>' for r in eq["risks"])
+                    + '</div>', unsafe_allow_html=True)
+
+        c1, c2, c3 = st.columns(3)
+        if c1.button("★ Add to pipeline", use_container_width=True):
+            aid = DB.log_analysis({
+                "url": x["url"], "source": "2dehands", "brand": eq["brand"], "model": eq["model"],
+                "category": eq["category"], "specs": eq["specs"], "condition": eq["condition_grade"],
+                "listing_type": x["listing_type"], "price": price, "low": ec["low"], "high": ec["high"],
+                "likely": ec["likely"], "confidence": ec["conf"], "liquidity": v["liquidity"],
+                "buffer": ec["buffer"], "ceiling": ec["ceiling"], "profit": ec["profit"],
+                "roi": ec["roi"], "verdict": ec["verdict"], "summary": v["summary"]},
+                payload={"eq": eq, "v": v})
+            _, new = DB.add_to_pipeline(f"{eq['brand']} {eq['model']}", x["url"],
+                                        ec["ceiling"], ec["likely"], aid)
+            st.success("Added to pipeline." if new else "Already in your pipeline.")
+
+        if c2.button("✉ Negotiation plan", use_container_width=True):
+            with st.spinner("Preparing…"):
+                try:
+                    st.session_state.neg = E.negotiate(api_key(), eq, ec, price)
+                except Exception as err:
+                    st.error(str(err))
+
+        with c3.popover("Pre-purchase checklist", use_container_width=True):
+            for c in eq["checks"]:
+                st.checkbox(c, key=f"chk_{hash(c)}")
+            if eq["questions"]:
+                st.markdown("**Ask the seller**")
+                for q in eq["questions"]:
+                    st.markdown(f"- {q}")
+
+        N = st.session_state.get("neg")
+        if N:
+            st.markdown(f'<div class="panel"><div class="panel-h">Negotiation plan</div>'
+                        f'<div class="kpi-row">'
+                        f'{kpi("Open at", eur(N["opening_offer_eur"]), "credible first offer")}'
+                        f'{kpi("Walk away above", eur(N["walk_away_eur"]), "hard limit")}'
+                        f'</div>', unsafe_allow_html=True)
+            if N["leverage"]:
+                st.markdown("".join(f'<div style="font-size:12.5px;color:var(--ink2);padding:3px 0">'
+                                    f'· {l}</div>' for l in N["leverage"]), unsafe_allow_html=True)
+            a, b = st.columns(2)
+            a.markdown(f'<div class="kpi-l" style="margin-bottom:6px">Dutch</div>'
+                       f'<div class="msg">{N["message_nl"]}</div>', unsafe_allow_html=True)
+            b.markdown(f'<div class="kpi-l" style="margin-bottom:6px">French</div>'
+                       f'<div class="msg">{N["message_fr"]}</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+# ============================================================ TAB 2 · SCREEN
+with T2:
+    PRESETS = {"All golf": "", "Drivers": "driver", "Iron sets": "ijzers set",
+               "Putters": "putter", "Wedges": "wedge", "Full bags": "golfset",
+               "Premium brands": "titleist ping taylormade callaway mizuno"}
+    p = st.radio("Preset", list(PRESETS), horizontal=True, label_visibility="collapsed")
+
+    c1, c2, c3, c4 = st.columns([3, 1, 1, 1.2])
+    q = c1.text_input("Search term", value=PRESETS[p], placeholder="e.g. taylormade stealth")
+    lo = c2.number_input("Min €", 0.0, 9999.0, 40.0, 10.0)
+    hi = c3.number_input("Max €", 0.0, 9999.0, 700.0, 10.0)
+    c4.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+    go = c4.button("Screen market", type="primary", use_container_width=True)
+
+    if go:
+        try:
+            with st.spinner("Scanning live listings…"):
+                rows = c_search(q, lo, hi, 45)
+            if not rows:
+                st.warning("No listings found. Widen the price range or use a broader term.")
+                st.session_state.scr = None
+            else:
+                with st.spinner(f"Triaging {len(rows)} listings…"):
+                    picks = E.screen(api_key(), rows, target_profit, costs, hi)
+                st.session_state.scr = {"n": len(rows), "picks": picks}
+        except requests.HTTPError as err:
+            st.error(f"2dehands could not be reached ({getattr(err.response,'status_code','?')}).")
+        except Exception as err:
+            st.error(f"{type(err).__name__}: {err}")
+
+    S = st.session_state.get("scr")
+    if S is None:
+        st.markdown('<div class="empty"><div class="empty-i">🔍</div>'
+                    '<div class="empty-t">Screen the market without a link</div>'
+                    '<div class="empty-s">Scans live 2dehands golf listings and surfaces only those '
+                    'plausibly underpriced against your economics.</div></div>', unsafe_allow_html=True)
+    elif not S["picks"]:
+        st.markdown(f'<div class="empty"><div class="empty-i">○</div>'
+                    f'<div class="empty-t">Nothing clears your economics</div>'
+                    f'<div class="empty-s">{S["n"]} listings screened, none with a plausible '
+                    f'{eur(target_profit)}+ margin. This is a normal and healthy result.</div></div>',
+                    unsafe_allow_html=True)
+    else:
+        picks = sorted(S["picks"], key=lambda z: -z["score"])
+        tot = sum(p["est_profit_eur"] for p in picks)
+        st.markdown('<div class="kpi-row">'
+            + kpi("Screened", S["n"], "live listings")
+            + kpi("Opportunities", len(picks), f"{len(picks)/S['n']*100:.0f}% hit rate")
+            + kpi("Combined upside", eur(tot), "if all realised", "pos")
+            + kpi("Best score", f"{picks[0]['score']:.0f}", picks[0]["item"][:26])
+            + '</div>', unsafe_allow_html=True)
+
+        for i, d in enumerate(picks):
+            cf = {"high": "t-g", "medium": "t-a", "low": "t-r"}.get(str(d["confidence"]).lower(), "t-n")
+            st.markdown(f"""<div class="deal"><div class="deal-t">
+              <div class="deal-n">{d['item']}</div><div class="deal-p">{eur(d['price_eur'])}</div></div>
+              <div class="deal-m">
+                <span class="bar"><span style="width:{min(d['score'],100):.0f}%"></span></span>
+                <b>{d['score']:.0f}</b>
+                <span class="tag {cf}">{d['confidence']}</span>
+                <span class="tag t-n">{d['category']}</span>
+                resale {eur(d['est_resale_eur'])} · margin <b style="color:#2E6B50">
+                {eur(d['est_profit_eur'])}</b>
+                <a href="{d['url']}" target="_blank" style="color:#2E6B50;text-decoration:none">open ↗</a>
+              </div><div class="deal-w">{d['why']}</div></div>""", unsafe_allow_html=True)
+
+            a, b = st.columns([1, 6])
+            if a.button("Watch", key=f"w{i}", use_container_width=True):
+                _, new = DB.add_to_pipeline(d["item"], d["url"], d["price_eur"], d["est_resale_eur"])
+                st.toast("Added to pipeline" if new else "Already watching")
+
+        st.markdown('<div class="hint" style="margin-top:14px">Screening is a first-pass filter from '
+                    'titles and prices only — no web research. Run promising listings through '
+                    '<b>Analyse</b> for verified market evidence before committing.</div>',
+                    unsafe_allow_html=True)
+
+# ============================================================ TAB 3 · PIPELINE
+with T3:
+    st.markdown('<div class="kpi-row">'
+        + kpi("Watching", K["watching"], "tracked opportunities")
+        + kpi("In stock", K["bought_n"], f"{eur(K['capital'])} tied up")
+        + kpi("Sold", K["sold_n"], f"{eur(K['revenue'])} revenue")
+        + kpi("Realised", eur(K["realized"]), f"ROI {K['roi']:.0f}%",
+              "pos" if K["realized"] >= 0 else "neg")
+        + '</div>', unsafe_allow_html=True)
+
+    view = st.radio("Stage", ["Watching", "Bought", "Sold", "All"], horizontal=True,
+                    label_visibility="collapsed")
+    items = DB.pipeline(None if view == "All" else view.lower())
+
+    if not items:
+        st.markdown('<div class="empty"><div class="empty-i">◷</div>'
+                    '<div class="empty-t">Nothing here yet</div>'
+                    '<div class="empty-s">Add deals from Analyse or Market screen to track them '
+                    'from watch through to sale.</div></div>', unsafe_allow_html=True)
+    else:
+        for it in items:
+            stage = {"watching": "t-b", "bought": "t-a", "sold": "t-g", "dropped": "t-n"}[it["status"]]
+            with st.container():
+                st.markdown(f"""<div class="deal"><div class="deal-t">
+                  <div class="deal-n">{it['item']}</div>
+                  <div class="deal-p">{eur(it['sold_price'] or it['buy_price'] or it['ceiling'])}</div>
+                  </div><div class="deal-m"><span class="tag {stage}">{it['status']}</span>
+                  est. resale {eur(it['est_resale'])} · ceiling {eur(it['ceiling'])}
+                  <a href="{it['url']}" target="_blank" style="color:#2E6B50;text-decoration:none">open ↗</a>
+                  </div></div>""", unsafe_allow_html=True)
+
+                with st.expander("Update"):
+                    if it["status"] == "watching":
+                        a, b, c = st.columns(3)
+                        bp = a.number_input("Bought for (€)", 0.0, 9999.0,
+                                            float(it["ceiling"] or 0), 5.0, key=f"bp{it['id']}")
+                        bd = b.date_input("Date", value=date.today(), key=f"bd{it['id']}")
+                        c.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+                        if c.button("Mark bought", key=f"mb{it['id']}", use_container_width=True):
+                            DB.update_pipeline(it["id"], status="bought", buy_price=bp,
+                                               buy_date=bd.isoformat())
+                            st.rerun()
+                        if st.button("Drop", key=f"dr{it['id']}"):
+                            DB.update_pipeline(it["id"], status="dropped")
+                            st.rerun()
+                    elif it["status"] == "bought":
+                        a, b, c, d = st.columns(4)
+                        sp = a.number_input("Sold for (€)", 0.0, 9999.0,
+                                            float(it["est_resale"] or 0), 5.0, key=f"sp{it['id']}")
+                        sc = b.number_input("Selling costs (€)", 0.0, 999.0, 0.0, 5.0, key=f"sc{it['id']}")
+                        sd = c.date_input("Date", value=date.today(), key=f"sd{it['id']}")
+                        d.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+                        if d.button("Mark sold", key=f"ms{it['id']}", use_container_width=True):
+                            DB.update_pipeline(it["id"], status="sold", sold_price=sp, costs=sc,
+                                               sold_date=sd.isoformat())
+                            st.rerun()
+                    else:
+                        m = (it["sold_price"] or 0) - (it["buy_price"] or 0) - (it["costs"] or 0)
+                        st.markdown(f"Bought {eur(it['buy_price'])} → sold {eur(it['sold_price'])} "
+                                    f"· **margin {eur(m)}**")
+                        if st.button("Delete", key=f"del{it['id']}"):
+                            DB.delete_pipeline(it["id"])
+                            st.rerun()
+
+# ============================================================ TAB 4 · PERFORMANCE
+with T4:
+    err = K["est_error"]
+    st.markdown('<div class="kpi-row">'
+        + kpi("Analyses run", K["analyses"], "listings valued")
+        + kpi("Estimate error", f"{err:.0f}%" if err is not None else "—",
+              "sold vs predicted", "pos" if (err is not None and err < 15) else "")
+        + kpi("Avg hold", f"{K['hold_days']:.0f}d" if K["hold_days"] is not None else "—",
+              "buy to sale")
+        + kpi("Realised ROI", f"{K['roi']:.0f}%", f"on {eur(K['capital'] + 0)} deployed",
+              "pos" if K["roi"] >= 0 else "neg")
+        + '</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="hint">Estimate error is the heart of this tool: it compares what '
+                'FlipGolf predicted an item would sell for against what you actually got. '
+                'Under 15% means the valuations are trustworthy. Consistently higher means you should '
+                'raise your target profit to compensate.</div>', unsafe_allow_html=True)
+
+    sold = DB.pipeline("sold")
+    if sold:
+        st.markdown('<div class="panel"><div class="panel-h">Predicted vs realised</div>',
+                    unsafe_allow_html=True)
+        df = pd.DataFrame([{ "Item": s["item"], "Predicted": s["est_resale"],
+                             "Sold": s["sold_price"],
+                             "Delta": (s["sold_price"] or 0) - (s["est_resale"] or 0),
+                             "Margin": (s["sold_price"] or 0) - (s["buy_price"] or 0) - (s["costs"] or 0)}
+                           for s in sold])
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        if len(df) > 1:
+            st.markdown('<div class="panel"><div class="panel-h">Margin by deal</div>',
+                        unsafe_allow_html=True)
+            st.bar_chart(df.set_index("Item")["Margin"], color="#2E6B50", height=230)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    an = DB.analyses(300)
+    if an:
+        adf = pd.DataFrame(an)
+        st.markdown('<div class="panel"><div class="panel-h">Verdict distribution</div>',
+                    unsafe_allow_html=True)
+        st.bar_chart(adf["verdict"].value_counts(), color="#1E4B3B", height=200)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.download_button("Export analysis log (CSV)",
+                           adf.to_csv(index=False).encode(), "flipgolf_analyses.csv",
+                           "text/csv")
+    else:
+        st.markdown('<div class="empty"><div class="empty-i">◔</div>'
+                    '<div class="empty-t">No history yet</div>'
+                    '<div class="empty-s">Analyse listings and record outcomes to calibrate '
+                    'the valuation engine against your real results.</div></div>',
+                    unsafe_allow_html=True)
