@@ -1,10 +1,16 @@
-# Golf Flip Scanner V0.1
+# FlipGolf
 
-Paste a 2dehands/2ememain URL and the app retrieves the listing and sends it to OpenAI for golf-equipment identification and initial flip analysis.
+A refined Streamlit MVP for analysing used golf equipment flips from 2dehands/2ememain.
 
-Required secret:
-OPENAI_API_KEY = "your-key-here"
+## V0.6
+- Refined product-style UI and branding
+- Live market research through OpenAI web search
+- Comparable evidence hierarchy: Belgium private > Netherlands private > European used-golf > international support
+- Comparable match percentage and rationale
+- Asking/bid vs estimated achievable resale distinction
+- Conservative purchase ceiling
+- Configurable target profit and minimum ROI
+- Bidding and fixed-price listing support
 
-Do not commit API keys to GitHub.
-
-V0.1 intentionally does not claim to perform live comparable-price research. That will be added next.
+## Run
+Set `OPENAI_API_KEY` in Streamlit Secrets, then run `streamlit run app.py`.
