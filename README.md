@@ -1,16 +1,30 @@
-# FlipGolf
+[README.md](https://github.com/user-attachments/files/32535944/README.md)
+# FlipGolf — Sourcing Desk
 
-A refined Streamlit MVP for analysing used golf equipment flips from 2dehands/2ememain.
+AI-assisted sourcing and valuation for a used-golf resale business (Belgium).
 
-## V0.6
-- Refined product-style UI and branding
-- Live market research through OpenAI web search
-- Comparable evidence hierarchy: Belgium private > Netherlands private > European used-golf > international support
-- Comparable match percentage and rationale
-- Asking/bid vs estimated achievable resale distinction
-- Conservative purchase ceiling
-- Configurable target profit and minimum ROI
-- Bidding and fixed-price listing support
+## Files
+| File | Purpose |
+|---|---|
+| `app.py` | UI layer — four tabs, design system |
+| `flip_engine.py` | Scraping, AI identification, valuation, screening, deal maths |
+| `flip_store.py` | SQLite persistence — analysis log, deal pipeline, KPIs |
+| `.streamlit/config.toml` | Light theme (prevents dark-mode collision) |
 
-## Run
-Set `OPENAI_API_KEY` in Streamlit Secrets, then run `streamlit run app.py`.
+## Setup
+1. Put `app.py`, `flip_engine.py`, `flip_store.py`, `requirements.txt` in the repo root.
+2. Create a folder `.streamlit/` and put `config.toml` inside it.
+3. In Streamlit Cloud → Settings → Secrets, add:
+   ```
+   OPENAI_API_KEY = "sk-..."
+   ```
+
+## Tabs
+- **Analyse** — paste a 2dehands link → verdict, max buy price, ceiling waterfall, comps, risks, negotiation plan (NL/FR).
+- **Market screen** — no link needed. Scans live listings, AI triages for underpriced items.
+- **Pipeline** — track deals: watching → bought → sold.
+- **Performance** — estimate error (predicted vs realised), hold time, realised ROI.
+
+## Notes
+- The SQLite DB is ephemeral on Streamlit Cloud free tier — export CSV regularly, or attach a managed Postgres for permanence.
+- Screening is a cheap first-pass filter (no web search). Analyse runs full web-searched research.
