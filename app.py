@@ -9,7 +9,7 @@ import streamlit as st
 import flip_engine as E
 import flip_store as DB
 
-st.set_page_config(page_title="FlipGolf — Sourcing Desk", page_icon="⛳",
+st.set_page_config(page_title="Flip It — Market Scanner", page_icon="↗",
                    layout="wide", initial_sidebar_state="expanded")
 DB.init()
 
@@ -220,6 +220,10 @@ def c_fetch(u): return E.fetch_listing(u)
 @st.cache_data(ttl=900, show_spinner=False)
 def c_search(q, lo, hi, lim): return E.search_listings(q, lo, hi, lim)
 
+@st.cache_data(ttl=900, show_spinner=False)
+def c_search_multi(q, lo, hi, lim, markets_tuple):
+    return E.search_markets(q, lo, hi, max(1, lim // max(1, len(markets_tuple))), list(markets_tuple))
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def c_identify(k, x): return E.identify(k, x)
 
@@ -242,8 +246,8 @@ K = DB.kpis()
 st.markdown(f"""
 <div class="topbar">
   <div class="logo"><div class="logo-m">⛳</div>
-    <div><div class="logo-t">FlipGolf</div>
-    <div class="logo-s">Sourcing desk · Antwerp</div></div></div>
+    <div><div class="logo-t">Flip It</div>
+    <div class="logo-s">Marketplace intelligence · Belgium & Netherlands</div></div></div>
   <div style="text-align:right">
     <div class="kpi-l">Realised profit</div>
     <div style="font-size:19px;font-weight:700;color:{'#2E6B50' if K['realized']>=0 else '#A93F3C'};
@@ -302,7 +306,7 @@ with T1:
         except ValueError as err:
             st.warning(str(err))
         except requests.HTTPError as err:
-            st.error(f"2dehands could not be reached ({getattr(err.response,'status_code','?')}).")
+            st.error(f"A marketplace could not be reached ({getattr(err.response,'status_code','?')}).")
         except Exception as err:
             st.error(f"{type(err).__name__}: {err}")
 
@@ -310,7 +314,7 @@ with T1:
     if not A:
         st.markdown('<div class="empty"><div class="empty-i">⛳</div>'
                     '<div class="empty-t">Paste a listing to value it</div>'
-                    '<div class="empty-s">FlipGolf identifies the equipment, researches live European '
+                    '<div class="empty-s">Flip It identifies the equipment, researches live European '
                     'market evidence and returns a disciplined maximum buy price.</div></div>',
                     unsafe_allow_html=True)
     else:
@@ -436,34 +440,40 @@ with T2:
                "Premium brands": "titleist ping taylormade callaway mizuno"}
     p = st.radio("Preset", list(PRESETS), horizontal=True, label_visibility="collapsed")
 
-    c1, c2, c3, c4 = st.columns([3, 1, 1, 1.2])
+    c1, c2, c3 = st.columns([3, 1, 1])
     q = c1.text_input("Search term", value=PRESETS[p], placeholder="e.g. taylormade stealth")
     lo = c2.number_input("Min €", 0.0, 9999.0, 40.0, 10.0)
     hi = c3.number_input("Max €", 0.0, 9999.0, 700.0, 10.0)
-    c4.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
-    go = c4.button("Screen market", type="primary", use_container_width=True)
+    st.markdown("**Markets**")
+    market_labels = ["2dehands / 2ememain 🇧🇪", "Marktplaats 🇳🇱", "eBay Belgium 🇧🇪"]
+    selected_labels = st.multiselect("", market_labels, default=market_labels[:2], label_visibility="collapsed")
+    market_map = {"2dehands / 2ememain 🇧🇪":"2dehands.be", "Marktplaats 🇳🇱":"marktplaats.nl", "eBay Belgium 🇧🇪":"eBay Belgium"}
+    selected_markets = tuple(market_map[x] for x in selected_labels)
+    go = st.button("Scan selected markets", type="primary", use_container_width=True)
 
     if go:
         try:
             with st.spinner("Scanning live listings…"):
-                rows = c_search(q, lo, hi, 45)
+                rows, source_errors = c_search_multi(q, lo, hi, 60, selected_markets)
             if not rows:
                 st.warning("No listings found. Widen the price range or use a broader term.")
                 st.session_state.scr = None
             else:
                 with st.spinner(f"Triaging {len(rows)} listings…"):
                     picks = E.screen(api_key(), rows, target_profit, costs, hi)
-                st.session_state.scr = {"n": len(rows), "picks": picks}
+                st.session_state.scr = {"n": len(rows), "picks": picks, "errors": source_errors, "markets": selected_labels}
         except requests.HTTPError as err:
-            st.error(f"2dehands could not be reached ({getattr(err.response,'status_code','?')}).")
+            st.error(f"A marketplace could not be reached ({getattr(err.response,'status_code','?')}).")
         except Exception as err:
             st.error(f"{type(err).__name__}: {err}")
 
     S = st.session_state.get("scr")
+    if S and S.get("errors"):
+        st.info("Some sources were unavailable: " + " · ".join(S["errors"][:3]))
     if S is None:
         st.markdown('<div class="empty"><div class="empty-i">🔍</div>'
                     '<div class="empty-t">Screen the market without a link</div>'
-                    '<div class="empty-s">Scans live 2dehands golf listings and surfaces only those '
+                    '<div class="empty-s">Scans live selected marketplaces and surfaces only those '
                     'plausibly underpriced against your economics.</div></div>', unsafe_allow_html=True)
     elif not S["picks"]:
         st.markdown(f'<div class="empty"><div class="empty-i">○</div>'
@@ -583,7 +593,7 @@ with T4:
         + '</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="hint">Estimate error is the heart of this tool: it compares what '
-                'FlipGolf predicted an item would sell for against what you actually got. '
+                'Flip It predicted an item would sell for against what you actually got. '
                 'Under 15% means the valuations are trustworthy. Consistently higher means you should '
                 'raise your target profit to compensate.</div>', unsafe_allow_html=True)
 
