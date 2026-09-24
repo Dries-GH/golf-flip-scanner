@@ -419,3 +419,117 @@ def economics(v, price, costs, target_profit, min_roi):
     return {"low": low, "high": high, "likely": likely, "conf": conf, "buffer": buffer,
             "buf_rate": buf_rate * 100, "ceiling": ceiling, "profit": profit, "roi": roi,
             "verdict": verdict, "why": why, "spread": high - low}
+
+# ----------------------------------------------------------------- multi-market connectors (V0.7)
+def _market_url_for_search(site, query):
+    from urllib.parse import quote_plus
+    q = quote_plus(query.strip()) if query.strip() else ""
+    if site == "2dehands.be":
+        return f"https://www.2dehands.be/l/sport-en-fitness/golf/q/{q}/" if q else "https://www.2dehands.be/l/sport-en-fitness/golf/"
+    if site == "2ememain.be":
+        return f"https://www.2ememain.be/l/sport-en-fitness/golf/q/{q}/" if q else "https://www.2ememain.be/l/sport-en-fitness/golf/"
+    if site == "marktplaats.nl":
+        return f"https://www.marktplaats.nl/l/sport-en-fitness/golf/q/{q}/" if q else "https://www.marktplaats.nl/l/sport-en-fitness/golf/"
+    return ""
+
+
+def search_marketplace_html(query="", min_p=None, max_p=None, limit=30, site="2dehands.be"):
+    """Lightweight prototype connector for public search pages. Uses the same normalized schema."""
+    base = f"https://www.{site}"
+    url = _market_url_for_search(site, query)
+    if not url:
+        return []
+    r = requests.get(url, headers=UA, timeout=25)
+    r.raise_for_status()
+    s = BeautifulSoup(r.text, "html.parser")
+    out, seen = [], set()
+    for a in s.find_all("a", href=True):
+        href = a["href"]
+        if site in ("2dehands.be", "2ememain.be") and "/v/" not in href:
+            continue
+        if site == "marktplaats.nl" and "/v/" not in href and "/a/" not in href:
+            continue
+        u = href if href.startswith("http") else base + href
+        u = u.split("?")[0]
+        if u in seen:
+            continue
+        parent = a
+        txt = a.get_text(" ", strip=True)
+        for _ in range(5):
+            parent = parent.parent
+            if parent is None:
+                break
+            t = parent.get_text(" ", strip=True)
+            if "€" in t or "Bieden" in t or "bieden" in t:
+                txt = t
+                break
+        title = a.get_text(" ", strip=True)
+        if len(title) < 5:
+            continue
+        m = re.search(r"€\s*([\d.\s]*\d(?:,\d{1,2})?)", txt)
+        price = parse_euro(m.group(1)) if m else None
+        bidding = price is None and any(x in txt.lower() for x in ("bieden", "bod"))
+        if price is not None:
+            if min_p is not None and price < min_p: continue
+            if max_p is not None and price > max_p: continue
+        thumb = ""
+        if parent:
+            im = parent.find("img", src=True)
+            if im and im["src"].startswith("http"): thumb = im["src"]
+        seen.add(u)
+        out.append({"title": title[:140], "price": price, "bidding": bidding, "url": u,
+                    "blurb": txt[:220], "thumb": thumb, "market": site})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def search_ebay(query="", min_p=None, max_p=None, limit=30, marketplace="EBAY_BE"):
+    """eBay Browse API connector. Requires EBAY_CLIENT_ID/EBAY_CLIENT_SECRET in secrets."""
+    cid, secret = os.getenv("EBAY_CLIENT_ID"), os.getenv("EBAY_CLIENT_SECRET")
+    if not cid or not secret:
+        return [], "eBay API credentials not configured"
+    token_r = requests.post("https://api.sandbox.ebay.com/identity/v1/oauth2/token",
+        auth=(cid, secret), data={"grant_type":"client_credentials","scope":"https://api.ebay.com/oauth/api_scope"},
+        headers={"Content-Type":"application/x-www-form-urlencoded"}, timeout=20)
+    # Production credentials should use the production token endpoint.
+    if token_r.status_code != 200:
+        token_r = requests.post("https://api.ebay.com/identity/v1/oauth2/token",
+            auth=(cid, secret), data={"grant_type":"client_credentials","scope":"https://api.ebay.com/oauth/api_scope"},
+            headers={"Content-Type":"application/x-www-form-urlencoded"}, timeout=20)
+    token_r.raise_for_status()
+    token = token_r.json()["access_token"]
+    params = {"q": query or "golf", "limit": min(limit, 200), "offset": 0}
+    filters = ["conditions:{USED}"]
+    if min_p is not None or max_p is not None:
+        filters.append(f"price:[{min_p or 0}..{max_p or 100000}]")
+    params["filter"] = ",".join(filters)
+    headers = {"Authorization": f"Bearer {token}", "X-EBAY-C-MARKETPLACE-ID": marketplace}
+    r = requests.get("https://api.ebay.com/buy/browse/v1/item_summary/search", params=params,
+                     headers=headers, timeout=25)
+    r.raise_for_status()
+    items = r.json().get("itemSummaries", [])
+    out = []
+    for it in items:
+        price = parse_euro((it.get("price") or {}).get("value"))
+        out.append({"title": it.get("title", "")[:140], "price": price,
+                    "bidding": "AUCTION" in str(it.get("buyingOptions", [])),
+                    "url": it.get("itemWebUrl", ""), "blurb": it.get("shortDescription", "")[:220],
+                    "thumb": (it.get("image") or {}).get("imageUrl", ""), "market": "eBay Belgium"})
+    return out, None
+
+
+def search_markets(query="", min_p=None, max_p=None, limit_each=20, markets=None):
+    markets = markets or ["2dehands.be", "marktplaats.nl"]
+    rows, errors = [], []
+    for site in markets:
+        try:
+            if site == "eBay Belgium":
+                got, err = search_ebay(query, min_p, max_p, limit_each)
+                rows.extend(got)
+                if err: errors.append(err)
+            else:
+                rows.extend(search_marketplace_html(query, min_p, max_p, limit_each, site))
+        except Exception as e:
+            errors.append(f"{site}: {type(e).__name__}: {e}")
+    return rows, errors
